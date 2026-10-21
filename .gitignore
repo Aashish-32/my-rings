@@ -1,0 +1,30 @@
+# Ring auth keys: anyone with one can connect to the ring. Never commit.
+keys/
+*.key
+*.key.old
+
+# Ring data and app state
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+rings.json
+app/server.log
+__pycache__/
+
+# Android build output and machine-specific settings
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+.idea/
+*.apk
+*.keystore
+*.jks
+
+# Assistant / editor tooling
+.claude/
+CLAUDE.md
+.vscode/

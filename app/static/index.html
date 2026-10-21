@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Rings</title>
+<style>
+:root{
+  --bg:#f4f5f8;--surface:#fff;--surface2:#f0f2f7;--line:#e3e6ee;--text:#14181f;--mute:#667085;
+  --accent:#5b6cff;--accent-soft:#e9ebff;--good:#18a874;--warn:#d98a14;--bad:#d9423e;
+  --deep:#4a56d6;--light:#8fa2ff;--rem:#a67cf0;--awake:#f0b35a;--shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px rgba(16,24,40,.05);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#0b0e14;--surface:#151a23;--surface2:#1b212c;--line:#252c39;--text:#eaeef5;--mute:#8b95a7;
+  --accent:#7d8bff;--accent-soft:#222849;--good:#3ecf9b;--warn:#f0b35a;--bad:#ef6b6b;
+  --deep:#5f6cf0;--light:#8fa2ff;--rem:#b793f5;--awake:#f0b35a;--shadow:none}}
+:root[data-theme=dark]{--bg:#0b0e14;--surface:#151a23;--surface2:#1b212c;--line:#252c39;--text:#eaeef5;--mute:#8b95a7;--accent:#7d8bff;--accent-soft:#222849;--good:#3ecf9b;--warn:#f0b35a;--bad:#ef6b6b;--deep:#5f6cf0;--light:#8fa2ff;--rem:#b793f5;--awake:#f0b35a;--shadow:none}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1040px;margin:0 auto;padding:0 18px}
+header{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:14px;height:62px}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;letter-spacing:-.01em}
+.logo svg{width:26px;height:26px}
+.pills{display:flex;gap:6px;overflow-x:auto;flex:1;scrollbar-width:none}
+.pill{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 13px 6px 10px;cursor:pointer;white-space:nowrap;font:inherit;color:var(--text)}
+.pill:hover{border-color:var(--accent)}.pill.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mute)}
+.pill small{opacity:.75;font-size:12px}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:10px;padding:8px 14px;font:inherit;font-weight:550;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
+.btn:hover{border-color:var(--accent)}.btn:disabled{opacity:.55;cursor:wait}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{background:transparent}
+.switch{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute);cursor:pointer;user-select:none;white-space:nowrap}
+.switch i{width:34px;height:20px;border-radius:99px;background:var(--line);position:relative;transition:.2s;display:block}
+.switch i:after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.switch.on i{background:var(--accent)}.switch.on i:after{left:16px}.switch.on{color:var(--text)}
+main{padding:22px 0 60px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:var(--shadow)}
+.card h3{margin:0 0 2px;font-size:13px;font-weight:600;color:var(--mute)}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:26px;align-items:center;margin-bottom:16px}
+@media(max-width:640px){.hero{grid-template-columns:1fr;justify-items:center;text-align:center}.hero .actions,.hero .chips{justify-content:center}}
+.gauge{position:relative;width:150px;height:150px}
+.gauge svg{width:100%;height:100%;transform:rotate(-90deg)}
+.gauge .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge .n{font-size:38px;font-weight:700;letter-spacing:-.03em;line-height:1}.gauge .l{font-size:12px;color:var(--mute);margin-top:4px}
+.title{display:flex;align-items:center;gap:10px;margin:0 0 6px}
+.name{font-size:26px;font-weight:700;letter-spacing:-.02em;cursor:text;border-bottom:2px dashed transparent}
+.name:hover{border-color:var(--line)}
+.nameinput{font:inherit;font-size:24px;font-weight:700;background:var(--surface2);color:var(--text);border:2px solid var(--accent);border-radius:10px;padding:2px 10px;width:min(100%,280px)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}
+.chip{display:inline-flex;gap:6px;align-items:center;background:var(--surface2);border-radius:999px;padding:4px 11px;font-size:13px;color:var(--mute)}
+.chip.good{color:var(--good)}.chip.warn{color:var(--warn)}.chip.bad{color:var(--bad)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.grid{display:grid;gap:16px;margin-bottom:16px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.val{display:flex;align-items:baseline;gap:5px;margin:6px 0 2px}.val b{font-size:32px;letter-spacing:-.03em;font-weight:700}.val span{color:var(--mute);font-size:14px}
+.delta{font-size:12.5px;font-weight:600}.delta.up{color:var(--good)}.delta.down{color:var(--warn)}.delta.flat{color:var(--mute)}
+.cap{font-size:12.5px;color:var(--mute);margin-top:2px}
+.spark{width:100%;height:58px;display:block;margin-top:10px}
+.sec{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 10px}.sec h2{margin:0;font-size:17px;letter-spacing:-.01em}.sec span{font-size:13px;color:var(--mute)}
+.hyp{display:flex;height:34px;border-radius:10px;overflow:hidden;margin:14px 0 10px;gap:2px}.hyp div{height:100%;min-width:2px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--mute)}.legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px}
+.empty{text-align:center;padding:30px 14px;color:var(--mute)}.empty b{color:var(--text);display:block;font-size:16px;margin-bottom:4px}
+.steps{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:10px}
+.steps li{display:flex;gap:12px;align-items:flex-start}.steps .k{flex:none;width:24px;height:24px;border-radius:50%;background:var(--surface2);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--mute)}
+.steps li.done .k{background:var(--good);color:#fff}.steps li.done{color:var(--mute)}
+.insights{display:grid;gap:8px;margin:0;padding:0;list-style:none}.insights li{display:flex;gap:10px;background:var(--surface2);border-radius:12px;padding:10px 13px;font-size:14px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);background:var(--text);color:var(--bg);padding:10px 18px;border-radius:12px;font-weight:550;opacity:0;pointer-events:none;transition:.25s;max-width:90vw;z-index:20}
+.toast.show{opacity:1;transform:translateX(-50%)}
+.spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:r .7s linear infinite;display:inline-block}@keyframes r{to{transform:rotate(360deg)}}
+/* developer mode */
+.dev{border:1px dashed var(--accent);border-radius:18px;padding:18px;margin-top:26px;background:color-mix(in srgb,var(--accent) 4%,transparent)}
+.dev h2{margin:0 0 12px;font-size:15px;color:var(--accent);display:flex;gap:8px;align-items:center}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 18px;margin-bottom:16px}
+.kv div{font-size:12.5px;color:var(--mute)}.kv b{display:block;color:var(--text);font:600 13px ui-monospace,Consolas,monospace;word-break:break-all}
+table{width:100%;border-collapse:collapse;font:12px ui-monospace,Consolas,monospace}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mute);font-weight:600}
+tr.click{cursor:pointer}tr.click:hover{background:var(--surface2)}
+.tag{background:var(--surface2);border-radius:6px;padding:1px 6px;cursor:pointer}.tag.on{background:var(--accent);color:#fff}
+pre{background:var(--surface2);border-radius:10px;padding:10px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;font:12px ui-monospace,Consolas,monospace;margin:8px 0 0}
+.scroll{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.tchart{width:100%;height:150px;display:block;margin-top:10px}
+.daynav{display:flex;align-items:center;gap:6px}.daynav button{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:8px;width:28px;height:26px;cursor:pointer;font:inherit}
+.daynav button:disabled{opacity:.35;cursor:default}
+.zones{display:flex;height:12px;border-radius:6px;overflow:hidden;gap:2px;margin:12px 0 8px;background:var(--surface2)}.zones div{height:100%}
+.stat{display:flex;justify-content:space-between;font-size:13.5px;padding:5px 0;border-top:1px solid var(--line)}.stat span{color:var(--mute)}
+.warns{display:grid;gap:8px;margin-bottom:14px}.warns div{border-left:3px solid var(--mute);background:var(--surface2);border-radius:8px;padding:8px 12px;font-size:13px}
+.warns b{display:block;font-size:13.5px}.warns .bad{border-color:var(--bad)}.warns .warn{border-color:var(--warn)}.warns .good{border-color:var(--good)}
+.logq{width:100%;font:13px ui-monospace,Consolas,monospace;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:6px 0}
+</style>
+</head>
+<body>
+<header><div class="wrap bar">
+  <div class="logo"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="var(--accent)" stroke-width="5"/><circle cx="16" cy="16" r="11" fill="none" stroke="var(--bg)" stroke-width="5" stroke-dasharray="6 70" stroke-linecap="round"/></svg>My Rings</div>
+  <div class="pills" id="pills"></div>
+  <label class="switch" id="devSw" title="Show low-level data"><i></i>Developer</label>
+  <button class="btn" id="addBtn">+ Add ring</button>
+</div></header>
+<main><div class="wrap"><div id="view"></div></div></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let rings=[],cur=null,dev=false,evFilter='',logQ='',lastLog='',busy=false;
+try{dev=localStorage.getItem('dev')==='1'}catch(e){}
+const api=async(p,o)=>(await fetch(p,o)).json();
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+const nowS=()=>Date.now()/1000;
+function ago(ts){if(!ts)return 'never';const s=Math.max(0,Math.round(nowS()-ts));return s<60?s+'s ago':s<3600?Math.round(s/60)+' min ago':s<172800?Math.round(s/3600)+' h ago':Math.round(s/86400)+' d ago'}
+const batColor=p=>p<=15?'var(--bad)':p<=30?'var(--warn)':'var(--good)';
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),3500)}
+
+async function job(j,label){
+  while(true){
+    await new Promise(r=>setTimeout(r,1000));
+    j=await api('/api/jobs/'+j.id);
+    if(j.status==='ok'||j.status==='error'){lastLog=`${label} — ${j.status}\n${j.log}`;return j}
+  }
+}
+const friendlyErr=l=>/no matching Oura ring/.test(l)?'Ring not in range. Bring it close to this PC.':/requires encryption/.test(l)?'The ring is not bonded in Windows Bluetooth settings.':/auth/i.test(l)?'The ring rejected the key — is this the right ring?':'Something went wrong. Turn on Developer mode to see details.';
+
+async function runAction(btn,label,path,okMsg){
+  if(busy)return;busy=true;const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span> '+label+'…';
+  try{const j=await job(await post(path),label);
+    let msg=okMsg;
+    if(j.status==='ok'&&(label==='Enabling'||label==='Checking')){
+      const mode=k=>(new RegExp('^\\s*'+k+':\\s*mode=(\\w+)','m').exec(j.log||'')||[])[1];
+      const hr=mode('daytime HR'),sp=mode('SpO2'),on=hr==='automatic'&&sp==='automatic';
+      msg=on?'Health tracking is ON — heart rate and SpO₂ are measuring automatically':`Health tracking is NOT fully on (heart rate: ${hr||'?'}, SpO₂: ${sp||'?'})`;
+    }
+    if(j.status==='ok'&&label==='Syncing'){
+      // "synced" must mean data arrived, not just that the command finished
+      const m=/Done: (\d+) events received, (\d+) new rows/.exec(j.log||'');
+      if(m)msg=+m[2]>0?`Synced — ${(+m[2]).toLocaleString()} new events`:'Connected, but the ring had no new events';
+    }
+    toast(j.status==='ok'?msg:friendlyErr(j.log))}
+  finally{busy=false;btn.disabled=false;btn.innerHTML=html;await load()}
+}
+
+/* ---------- charts ---------- */
+function spark(cv,vals,color='var(--accent)',fmtX){
+  const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const col=getComputedStyle(document.body).getPropertyValue(color.slice(4,-1))||color;
+  const c=color.startsWith('var(')?getComputedStyle(document.documentElement).getPropertyValue(color.slice(4,-1)).trim():color;
+  if(vals.length<2){g.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--mute');g.font='12px system-ui';g.fillText(vals.length?'More days needed for a trend':'No data yet',0,h/2);return}
+  const mn=Math.min(...vals),mx=Math.max(...vals),pad=(mx-mn||1)*.25,lo=mn-pad,hi=mx+pad;
+  const X=i=>2+i*(w-4)/(vals.length-1),Y=v=>h-4-(v-lo)/(hi-lo)*(h-8);
+  const grad=g.createLinearGradient(0,0,0,h);grad.addColorStop(0,c+'55');grad.addColorStop(1,c+'00');
+  g.beginPath();vals.forEach((v,i)=>i?g.lineTo(X(i),Y(v)):g.moveTo(X(i),Y(v)));
+  g.lineTo(X(vals.length-1),h);g.lineTo(X(0),h);g.closePath();g.fillStyle=grad;g.fill();
+  g.beginPath();vals.forEach((v,i)=>i?g.lineTo(X(i),Y(v)):g.moveTo(X(i),Y(v)));
+  g.strokeStyle=c;g.lineWidth=2.2;g.lineJoin='round';g.stroke();
+  g.beginPath();g.arc(X(vals.length-1),Y(vals.at(-1)),3.6,0,7);g.fillStyle=c;g.fill();
+}
+const hex=v=>{const c=getComputedStyle(document.documentElement).getPropertyValue(v).trim();return c};
+function sparkC(cv,vals,cssVar){spark(cv,vals,hex(cssVar))}
+/* Time-axis chart: pts=[{t:unixSec,v}], line breaks across gaps > gap seconds; bars draws columns instead. */
+function tchart(cv,pts,cssVar,{unit='',d=0,bars=false,gap=1200,marks=[]}={}){
+  const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const g=cv.getContext('2d');g.scale(dpr,dpr);const c=hex(cssVar),mute=hex('--mute'),line=hex('--line');
+  g.font='11px system-ui';
+  if(pts.length<2){g.fillStyle=mute;g.fillText('Not enough data for this day',0,h/2);return}
+  const L=34,R=6,T=6,B=18,t0=pts[0].t,t1=pts.at(-1).t;
+  let mn=Math.min(...pts.map(p=>p.v)),mx=Math.max(...pts.map(p=>p.v));if(bars)mn=0;
+  const pad=(mx-mn||1)*.12;const lo=bars?0:mn-pad,hi=mx+pad;
+  const X=t=>L+(t-t0)/Math.max(1,t1-t0)*(w-L-R),Y=v=>T+(1-(v-lo)/(hi-lo))*(h-T-B);
+  g.strokeStyle=line;g.fillStyle=mute;g.lineWidth=1;
+  for(const v of [lo+(hi-lo)*.15,(lo+hi)/2,hi-(hi-lo)*.15]){g.beginPath();g.moveTo(L,Y(v));g.lineTo(w-R,Y(v));g.stroke();g.fillText(v.toFixed(d),0,Y(v)+4)}
+  const pxPerS=(w-L-R)/Math.max(1,t1-t0),step=[900,1800,3600,7200,10800,21600,43200].find(s=>s*pxPerS>=64)||86400;
+  const tz=new Date().getTimezoneOffset()*60;  // align ticks to local clock hours
+  for(let t=Math.ceil((t0-tz)/step)*step+tz;t<=t1;t+=step){const x=X(t);if(x<L+14||x>w-R-14)continue;
+    const lb=new Date(t*1000).toLocaleTimeString([],step>=3600?{hour:'numeric'}:{hour:'numeric',minute:'2-digit'});
+    g.fillText(lb,x-g.measureText(lb).width/2,h-4)}
+  for(const m of marks){g.strokeStyle=hex('--warn');g.setLineDash([3,3]);g.beginPath();g.moveTo(X(m),T);g.lineTo(X(m),h-B);g.stroke();g.setLineDash([])}
+  if(bars){const bw=Math.max(1,(w-L-R)/((t1-t0)/60||1)-.5);g.fillStyle=c;pts.forEach(p=>g.fillRect(X(p.t)-bw/2,Y(p.v),bw,h-B-Y(p.v)));return}
+  g.strokeStyle=c;g.lineWidth=2;g.lineJoin='round';g.beginPath();
+  pts.forEach((p,i)=>{(i&&p.t-pts[i-1].t<=gap)?g.lineTo(X(p.t),Y(p.v)):g.moveTo(X(p.t),Y(p.v))});g.stroke();
+  const p=pts.at(-1);g.beginPath();g.arc(X(p.t),Y(p.v),3.4,0,7);g.fillStyle=c;g.fill();
+  cv.title=`${pts.length} points · ${mn.toFixed(d)}–${mx.toFixed(d)} ${unit}`;
+}
+
+/* ---------- view ---------- */
+async function load(){
+  rings=await api('/api/rings');
+  if(!cur||!rings.find(r=>r.serial===cur))cur=rings[0]?.serial||null;
+  paintPills();await render();
+}
+function paintPills(){
+  $('#pills').innerHTML=rings.map(r=>{const b=r.battery;return `<button class="pill ${r.serial===cur?'on':''}" data-s="${r.serial}"><span class="dot" style="background:${b?batColor(b.pct):'var(--mute)'}"></span>${esc(r.name)}${b?`<small>${b.pct}%</small>`:''}</button>`}).join('');
+  document.querySelectorAll('.pill').forEach(b=>b.onclick=()=>{cur=b.dataset.s;load()});
+  $('#devSw').classList.toggle('on',dev);
+}
+
+const METRICS=[
+  {k:'resting_hr',t:'Resting heart rate',u:'bpm',d:0,c:'--bad',good:'down',cap:'Lower usually means better recovery'},
+  {k:'hrv',t:'Heart rate variability',u:'ms',d:0,c:'--accent',good:'up',cap:'Higher usually means better recovery'},
+  {k:'temp',t:'Skin temperature',u:'°C',d:1,c:'--warn',good:null,cap:'Compared with your own normal'},
+  {k:'spo2',t:'Blood oxygen',u:'%',d:1,c:'--good',good:'up',cap:'Typically 95–100% while asleep'},
+];
+
+let selDay=null,dayData=null;
+const fmtMin=m=>m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;
+async function dayView(ser){
+  const dates=ser.map(d=>d.date);
+  if(!dates.includes(selDay))selDay=dates.at(-1);
+  const i=dates.indexOf(selDay),d=ser[i];
+  dayData=await api(`/api/rings/${cur}/day/${selDay}`);
+  const z=d.active_min||{},zt=(z.low||0)+(z.medium||0)+(z.high||0)||1;
+  const label=i===dates.length-1?'Today':new Date(selDay+'T12:00').toLocaleDateString([],{weekday:'long',month:'short',day:'numeric'});
+  return `<div class="sec"><h2>${esc(label)}</h2><div class="daynav">
+      <button data-d="${dates[i-1]||''}" ${i>0?'':'disabled'} title="Previous day">‹</button>
+      <span>${esc(selDay)}</span>
+      <button data-d="${dates[i+1]||''}" ${i<dates.length-1?'':'disabled'} title="Next day">›</button></div></div>
+    <div class="grid g2">
+      <div class="card"><h3>Activity</h3>
+        <div class="val"><b>${d.active_kcal??'—'}</b><span>active kcal (est.)</span></div>
+        <div class="zones" title="Minutes by intensity">
+          <div style="flex:${z.low||0};background:var(--light)"></div><div style="flex:${z.medium||0};background:var(--accent)"></div><div style="flex:${z.high||0};background:var(--bad)"></div></div>
+        <div class="legend"><span><i style="background:var(--light)"></i>Low ${fmtMin(z.low||0)}</span><span><i style="background:var(--accent)"></i>Medium ${fmtMin(z.medium||0)}</span><span><i style="background:var(--bad)"></i>High ${fmtMin(z.high||0)}</span></div>
+        <div style="margin-top:12px">
+          <div class="stat"><span>Time wearing the ring</span><b>${fmtMin(d.worn_min||0)}</b></div>
+          <div class="stat"><span>Average heart rate (awake)</span><b>${d.avg_hr!=null?Math.round(d.avg_hr)+' bpm':'—'}</b></div>
+          <div class="stat" title="The ring's inactivity reminder (alert_event)"><span>Move reminders</span><b>${d.move_alerts||0}</b></div></div>
+        <div class="cap" style="margin-top:8px">Calories use ${s_weight} kg and the ring's per-minute MET; steps need the real-steps feature, which this ring does not report yet.</div></div>
+      <div class="card"><h3>Activity level · MET per minute</h3><canvas class="tchart" id="mtc"></canvas>
+        <div class="cap">Dashed lines mark move reminders.</div></div>
+      <div class="card"><h3>Heart rate · 5-min median</h3><canvas class="tchart" id="hrc"></canvas>
+        <div class="cap">Only good-quality beats while worn.</div></div>
+      <div class="card"><h3>Skin temperature</h3><canvas class="tchart" id="tmc"></canvas>
+        <div class="cap">Only while worn (charger and desk readings are dropped).</div></div>
+    </div>`;
+}
+let s_weight=70;
+
+async function render(){
+  const v=$('#view');
+  if(!cur){v.innerHTML=`<div class="card empty"><b>No rings yet</b>Factory-reset your ring, add it in Windows Bluetooth settings, then press “Add ring”.</div>`;return}
+  const ring=rings.find(r=>r.serial===cur);
+  const [s,bh]=await Promise.all([api(`/api/rings/${cur}/summary`),api(`/api/rings/${cur}/battery`)]);
+  const ser=s.series||[];const hasData=ser.length>0;
+  s_weight=s.weight_kg||70;dayData=null;
+  const b=ring.battery;
+  const stale=b&&nowS()-b.ts>Math.max(300,ring.battery_interval*3);
+  const circ=2*Math.PI*62;
+
+  let html=`
+  <div class="card hero">
+    <div class="gauge" id="gauge"></div>
+    <div>
+      <div class="title"><span class="name" id="nm" title="Click to rename">${esc(ring.name)}</span></div>
+      <div class="chips" id="chips"></div>
+      <div class="actions">
+        <button class="btn primary" id="sync">Sync now</button>
+        <button class="btn" id="feat"></button>
+      </div>
+    </div>
+  </div>`;
+
+  if(!hasData){
+    const steps=[
+      ['Ring paired and connected',true],
+      ['Health tracking switched on',true],
+      ['Wear the ring overnight',false],
+      ['Press Sync in the morning',false]];
+    html+=`<div class="card"><div class="empty" style="padding-bottom:6px"><b>Waiting for your first night of data</b>The ring only starts recording sleep, heart rate and temperature once it's worn.</div>
+      <ul class="steps" style="max-width:380px;margin:0 auto">${steps.map(([t,d],i)=>`<li class="${d?'done':''}"><span class="k">${d?'✓':i+1}</span>${t}</li>`).join('')}</ul></div>`;
+  }else{
+    const last=[...ser].reverse();
+    const latest=k=>last.find(d=>d[k]!=null)?.[k]??null;
+    const avg7=k=>{const a=ser.slice(-8,-1).map(d=>d[k]).filter(x=>x!=null);return a.length?a.reduce((x,y)=>x+y,0)/a.length:null};
+    const sl=last.find(d=>d.sleep_min);
+    html+=`<div class="sec"><h2>Last night</h2><span>${sl?esc(sl.date):''}</span></div>`;
+    if(sl){const m=sl.sleep_min,tot=Object.values(m).reduce((a,b)=>a+b,0);
+      const col={deep:'--deep',light:'--light',rem:'--rem',awake:'--awake'};
+      html+=`<div class="card"><div class="val"><b>${Math.floor(tot/60)}h ${Math.round(tot%60)}m</b><span>in bed</span></div>
+      <div class="hyp">${['deep','light','rem','awake'].filter(k=>m[k]).map(k=>`<div title="${k} ${Math.round(m[k])} min" style="flex:${m[k]};background:var(${col[k]})"></div>`).join('')}</div>
+      <div class="legend">${['deep','light','rem','awake'].filter(k=>m[k]).map(k=>`<span><i style="background:var(${col[k]})"></i>${k[0].toUpperCase()+k.slice(1)} ${Math.round(m[k])}m</span>`).join('')}</div></div>`}
+    else html+=`<div class="card empty"><b>No sleep stages yet</b>They appear after the ring records a full night.</div>`;
+    html+=`<div class="sec"><h2>Your vitals</h2><span>last 14 days</span></div><div class="grid g4">`;
+    const srcCap={resting_hr:{daytime:'Daytime estimate: your 15 calmest minutes. Overnight data replaces it.'},
+      hrv:{daytime:'Daytime estimate from beat-to-beat intervals. Overnight HRV replaces it.'}};
+    html+=METRICS.map(m=>{const cur=latest(m.k),base=avg7(m.k);let dl='';
+      const src=last.find(d=>d[m.k]!=null)?.[m.k.replace(/_hr$/,'')+'_src'];
+      if(cur!=null&&base!=null){const diff=cur-base,mag=Math.abs(diff)<(m.d?0.05:0.5);
+        const cls=mag?'flat':(m.good?((diff>0)===(m.good==='up')?'up':'down'):'flat');
+        dl=`<div class="delta ${cls}">${mag?'In line with your 7-day average':`${diff>0?'▲':'▼'} ${Math.abs(diff).toFixed(m.d)} ${m.u} vs 7-day avg`}</div>`}
+      return `<div class="card"><h3>${m.t}</h3><div class="val"><b>${cur==null?'—':cur.toFixed(m.d)}</b><span>${m.u}</span></div>${dl}<div class="cap">${srcCap[m.k]?.[src]||m.cap}</div><canvas class="spark" data-k="${m.k}" data-c="${m.c}"></canvas></div>`}).join('')+`</div>`;
+    html+=await dayView(ser);
+    const ins=[];
+    for(const m of METRICS){const c=latest(m.k),b0=avg7(m.k);if(c!=null&&b0!=null&&Math.abs(c-b0)>=(m.d?0.2:2))ins.push(`${m.t} is ${Math.abs(c-b0).toFixed(m.d)} ${m.u} ${c>b0?'higher':'lower'} than your 7-day average.`)}
+    if(ins.length)html+=`<div class="sec"><h2>Insights</h2></div><ul class="insights">${ins.map(t=>`<li>💡 ${t}</li>`).join('')}</ul>`;
+  }
+
+  const dr=s.drain_pct_h;
+  html+=`<div class="sec"><h2>Battery history</h2><span>last 24 hours · polls + ring's own records</span></div><div class="card">
+    ${dr?`<div class="chips" style="margin:0"><span class="chip ${dr>2?'bad':dr>1?'warn':'good'}">Draining ${dr}%/h · about ${Math.round(100/dr)} h per charge</span></div>`:''}
+    <canvas class="tchart" id="batc" style="height:110px"></canvas></div>`;
+
+  if(dev)html+=await devPanel(ring,s);
+  v.innerHTML=html;
+
+  paintHero(ring);
+  document.querySelectorAll('canvas[data-k]').forEach(cv=>sparkC(cv,ser.map(d=>d[cv.dataset.k]).filter(x=>x!=null).slice(-14),cv.dataset.c));
+  tchart($('#batc'),(bh.history||[]).map(p=>({t:p.ts,v:p.pct})),'--good',{unit:'%',gap:3*3600});
+  if(dayData){const dd=dayData;
+    if($('#hrc'))tchart($('#hrc'),dd.hr||[],'--bad',{unit:'bpm'});
+    if($('#tmc'))tchart($('#tmc'),dd.temp||[],'--warn',{unit:'°C',d:1});
+    if($('#mtc'))tchart($('#mtc'),dd.met||[],'--accent',{unit:'MET',d:1,bars:true,marks:dd.alerts||[]});
+    document.querySelectorAll('.daynav button').forEach(b=>b.onclick=()=>{selDay=b.dataset.d;render()});}
+  $('#nm').onclick=rename;
+  $('#sync').onclick=e=>runAction(e.currentTarget,'Syncing',`/api/rings/${cur}/sync`,'Sync complete');
+  const tr=ring.tracking,trOn=tr&&tr.state==='on';
+  $('#feat').textContent=trOn?'Re-check tracking':'Turn on health tracking';
+  $('#feat').title=trOn?'Ask the ring which measurements are switched on (read-only)':'Switch on automatic heart rate and SpO₂ measurement';
+  $('#feat').onclick=e=>runAction(e.currentTarget,trOn?'Checking':'Enabling',`/api/rings/${cur}/${trOn?'tracking':'features'}`,'');
+  if(dev)wireDev(ring);
+}
+
+function trackingChip(t){
+  if(!t)return '<span class="chip" title="Press “Turn on health tracking” to check and switch it on">○ Health tracking: not checked yet</span>';
+  const nm=m=>m==='automatic'?'on':(m||'?');
+  const tip=`Heart rate: ${nm(t.hr)} · SpO₂: ${nm(t.spo2)} · Resting HR: ${nm(t.resting)} · checked ${ago(t.ts)}`;
+  if(t.state==='on')return `<span class="chip good" title="${tip}">● Health tracking on</span>`;
+  if(t.state==='partial')return `<span class="chip warn" title="${tip}">● Health tracking partly on (HR ${nm(t.hr)}, SpO₂ ${nm(t.spo2)})</span>`;
+  return `<span class="chip bad" title="${tip}">● Health tracking off</span>`;
+}
+function paintHero(ring){
+  const b=ring.battery,circ=2*Math.PI*62,g=$('#gauge'),ch=$('#chips');if(!g)return;
+  const pct=b?b.pct:0,stale=b&&nowS()-b.ts>Math.max(300,ring.battery_interval*3);
+  g.innerHTML=`<svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="62" fill="none" stroke="var(--surface2)" stroke-width="12"/>
+   <circle cx="75" cy="75" r="62" fill="none" stroke="${b?batColor(pct):'var(--line)'}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${circ*(1-pct/100)}" style="transition:stroke-dashoffset .6s"/></svg>
+   <div class="c"><div class="n">${b?pct+'%':'—'}</div><div class="l">battery</div></div>`;
+  const synced=ring.last_sync;
+  ch.innerHTML=`<span class="chip ${!b?'':stale?'warn':'good'}">● ${!b?'Checking…':stale?'Out of range · last seen '+ago(b.ts):'In range · updated '+ago(b.ts)}</span>
+   <span class="chip">↻ Synced ${ago(synced)}</span>
+   ${trackingChip(ring.tracking)}
+   ${b&&pct<=20?'<span class="chip bad">Charge soon</span>':''}`;
+}
+setInterval(async()=>{if(busy||!cur)return;try{rings=await api('/api/rings');paintPills();const r=rings.find(x=>x.serial===cur);if(r)paintHero(r)}catch(e){}},10000);
+setInterval(()=>{const r=rings.find(x=>x.serial===cur);if(r&&!busy)paintHero(r)},1000);
+
+function rename(e){
+  const ring=rings.find(r=>r.serial===cur),inp=document.createElement('input');
+  inp.className='nameinput';inp.value=ring.name;inp.maxLength=40;e.currentTarget.replaceWith(inp);inp.focus();inp.select();
+  let done=false;const save=async ok=>{if(done)return;done=true;const n=inp.value.trim();
+    if(ok&&n&&n!==ring.name){await post(`/api/rings/${cur}/rename`,{name:n});toast('Renamed to '+n)}load()};
+  inp.onkeydown=k=>{if(k.key==='Enter')save(true);if(k.key==='Escape')save(false)};inp.onblur=()=>save(true);
+}
+
+/* ---------- developer mode ---------- */
+async function devPanel(ring,s){
+  const ev=await api(`/api/rings/${cur}/events?limit=60${evFilter?'&name='+encodeURIComponent(evFilter):''}`);
+  const d=s.device||{};
+  const counts=Object.entries(s.counts||{});
+  const logs=await api(`/api/rings/${cur}/logs?limit=400${logQ?'&q='+encodeURIComponent(logQ):''}`);
+  const warns=s.warnings||[],rb=[...(s.reboots||[])].reverse();
+  const health=`<h3 style="margin:0 0 6px;font-size:13px;color:var(--mute)">Ring health — from the ring's own logs</h3>
+   <div class="warns">${warns.length?warns.map(w=>`<div class="${w.level}"><b>${esc(w.title)}</b>${esc(w.detail)}</div>`).join(''):'<div class="good"><b>No problems found</b></div>'}</div>
+   ${rb.length?`<h3 style="margin:0 0 6px;font-size:13px;color:var(--mute)">Restarts (${rb.length})</h3>
+   <div class="scroll" style="max-height:160px;margin-bottom:14px"><table><thead><tr><th>Time</th><th>Cause</th><th>Firmware</th></tr></thead><tbody>
+   ${rb.map(r=>`<tr><td>${new Date(r.ts*1000).toLocaleString()}</td><td>${esc(r.label)} (${r.reason})</td><td>${esc(r.firmware||'')}</td></tr>`).join('')}</tbody></table></div>`:''}
+   <h3 style="margin:0;font-size:13px;color:var(--mute)">Firmware log (${logs.length}${logs.length>=400?'+':''} newest first)</h3>
+   <input class="logq" id="logq" placeholder="Filter, e.g. wdt, batt, DHR, chg, ble" value="${esc(logQ)}">
+   <div class="scroll" style="max-height:260px;margin-bottom:14px"><table><tbody>
+   ${logs.map(l=>`<tr><td style="white-space:nowrap">${new Date(l.ts*1000).toLocaleTimeString()}</td><td>${esc(l.text)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="dev"><h2>⚙ Developer mode</h2>${health}
+   <div class="kv">
+     <div>Serial<b>${esc(ring.serial)}</b></div><div>MAC<b>${esc(d.mac||'—')}</b></div>
+     <div>Firmware / API<b>${esc(d.firmware||'—')} / ${esc(d.api_version||'—')}</b></div>
+     <div>Key file<b>${esc(ring.key_file)}</b></div>
+     <div>Battery poll interval<b>${ring.battery_interval}s</b></div>
+     <div>Last battery sample<b>${ring.battery?new Date(ring.battery.ts*1000).toLocaleString():'—'}</b></div>
+     <div>Last sync (unix)<b>${s.last_sync||'—'}</b></div></div>
+   <h3 style="margin:0 0 6px;font-size:13px;color:var(--mute)">Event types — click to filter</h3>
+   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+     <span class="tag ${evFilter?'':'on'}" data-f="">all</span>
+     ${counts.map(([n,c])=>`<span class="tag ${evFilter===n?'on':''}" data-f="${esc(n)}">${esc(n)} · ${c}</span>`).join('')}</div>
+   <div class="scroll"><table><thead><tr><th>Time</th><th>Event</th><th>Tag</th><th>Bytes</th><th>Decoded / hex head</th></tr></thead><tbody>
+   ${ev.map(e=>`<tr class="click" data-id="${e.id}"><td>${e.unix?new Date(e.unix*1000).toLocaleString():'ts '+e.ring_timestamp}</td><td>${esc(e.name)}</td><td>0x${e.tag.toString(16)}</td><td>${e.blen}</td><td>${esc((e.decoded_json||e.hexhead||'').slice(0,90))}</td></tr>`).join('')}
+   </tbody></table></div>
+   <pre id="evdetail">Click a row to see the full decoded JSON.</pre>
+   <h3 style="margin:14px 0 0;font-size:13px;color:var(--mute)">Last command output</h3>
+   <pre id="rawlog">${esc(lastLog||'No commands run yet.')}</pre>
+   <textarea id="evdata" hidden>${esc(JSON.stringify(ev))}</textarea></div>`;
+}
+function wireDev(ring){
+  document.querySelectorAll('.dev .tag').forEach(t=>t.onclick=()=>{evFilter=t.dataset.f;render()});
+  const lq=$('#logq');lq.onkeydown=k=>{if(k.key==='Enter'){logQ=lq.value.trim();render().then(()=>$('#logq')?.focus())}};
+  const ev=JSON.parse($('#evdata').value);
+  document.querySelectorAll('.dev tr.click').forEach(tr=>tr.onclick=()=>{
+    const e=ev.find(x=>x.id==tr.dataset.id);let j=e.decoded_json;try{j=JSON.stringify(JSON.parse(j),null,2)}catch(_){}
+    $('#evdetail').textContent=`${e.name}  (tag 0x${e.tag.toString(16)}, ${e.blen} bytes, ring ts ${e.ring_timestamp})\n\n`+(j||'(not decoded) hex: '+e.hexhead);});
+}
+$('#devSw').onclick=()=>{dev=!dev;try{localStorage.setItem('dev',dev?'1':'0')}catch(e){}paintPills();render()};
+
+$('#addBtn').onclick=async e=>{
+  if(!confirm('Add a NEW ring?\n\n1. Factory-reset it (light blinking blue).\n2. Add it in Windows Settings → Bluetooth.\n3. Put it on the charger next to this PC — and keep your other rings away.\n\nContinue?'))return;
+  const name=prompt('Name for this ring','Ring '+(rings.length+1));if(!name)return;
+  if(busy)return;busy=true;e.currentTarget.disabled=true;toast('Pairing… keep the ring close');
+  try{const j=await job(await post('/api/pair',{name}),'Pair');toast(j.status==='ok'?'Ring added':friendlyErr(j.log))}
+  finally{busy=false;e.currentTarget.disabled=false;load()}
+};
+
+/* Like the official app, data syncs are lifecycle-triggered rather than on a timer: when the page is opened or comes
+   back to the foreground, and when it is hidden. The server skips it if any ring operation is already running. */
+let autoRunning=false;
+async function autoSync(reason){
+  if(!cur||busy||autoRunning)return;
+  autoRunning=true;
+  try{
+    const j=await post(`/api/rings/${cur}/sync`,{auto:true});
+    if(j.status==='skipped')return;
+    let r=j;while(r.status!=='ok'&&r.status!=='error'){await new Promise(x=>setTimeout(x,1500));r=await api('/api/jobs/'+j.id)}
+    if(r.status==='ok'){const m=/Done: (\d+) events received, (\d+) new rows/.exec(r.log||'');if(m&&+m[2]>0)toast(`Synced — ${(+m[2]).toLocaleString()} new events`);await load()}
+  }catch(e){}finally{autoRunning=false}
+}
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible')autoSync('foreground');
+  else if(cur)fetch(`/api/rings/${cur}/sync`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auto:true}),keepalive:true}).catch(()=>{});
+});
+load().then(()=>autoSync('open'));
+</script>
+</body>
+</html>
