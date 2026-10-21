@@ -21,7 +21,7 @@ data class StoredEvent(val id: Long, val name: String, val tag: Int, val ringTs:
  * Local SQLite store. The events / device / sync_state tables intentionally mirror the PC client's
  * oura.db, so a database from either side can be read by the other.
  */
-class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db", null, 3) {
+class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("create table rings (serial text primary key, name text not null, address text, key_hex text not null, added_unix integer not null)")
@@ -35,7 +35,7 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
         db.execSQL("create index events_name on events (serial, name, ring_timestamp)")
         db.execSQL("create table battery (serial text not null, pct integer not null, ts integer not null)")
         db.execSQL("create index battery_idx on battery (serial, ts)")
-        onUpgrade(db, 1, 3)
+        onUpgrade(db, 1, 4)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
@@ -46,6 +46,8 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
         }
         // v3: remember what the ring last said about heart-rate / SpO2 tracking, so the UI can show a real status
         if (o < 3) db.execSQL("create table if not exists tracking (serial text primary key, hr_mode integer, spo2_mode integer, ts integer not null)")
+        // v4: the wearer's body profile, per ring (used for calories, BMR and age-aware sleep scoring)
+        if (o < 4) db.execSQL("create table if not exists profile (serial text primary key, weight_kg real, height_cm real, birth_year integer, sex integer)")
     }
 
     private val now get() = System.currentTimeMillis() / 1000
@@ -77,7 +79,23 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
 
     @Synchronized fun deleteRing(serial: String) {
         val db = writableDatabase
-        for (t in listOf("rings", "device", "sync_state", "events", "battery", "tracking")) db.delete(t, "serial=?", arrayOf(serial))
+        for (t in listOf("rings", "device", "sync_state", "events", "battery", "tracking", "profile")) db.delete(t, "serial=?", arrayOf(serial))
+    }
+
+    // ---- body profile ----
+    @Synchronized fun profile(serial: String): Profile =
+        readableDatabase.rawQuery("select weight_kg, height_cm, birth_year, sex from profile where serial=?", arrayOf(serial)).use { c ->
+            if (!c.moveToFirst()) Profile() else Profile(
+                if (c.isNull(0)) null else c.getDouble(0), if (c.isNull(1)) null else c.getDouble(1),
+                if (c.isNull(2)) null else c.getInt(2), Sex.from(if (c.isNull(3)) null else c.getInt(3)),
+            )
+        }
+
+    @Synchronized fun saveProfile(serial: String, p: Profile) {
+        val v = ContentValues().apply {
+            put("serial", serial); put("weight_kg", p.weightKg); put("height_cm", p.heightCm); put("birth_year", p.birthYear); put("sex", p.sex.code)
+        }
+        writableDatabase.insertWithOnConflict("profile", null, v, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     // ---- health tracking status ----

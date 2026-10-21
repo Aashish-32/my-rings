@@ -42,10 +42,10 @@ internal val METRICS = listOf(
 )
 
 /** Last 24 h of battery: phone-read samples merged with the ring's own records (which arrive with each sync). */
-internal fun batteryPoints(d: Detail?): List<Double> {
+internal fun batteryPoints(d: Detail?): List<Pair<Long, Double>> {
     if (d == null) return emptyList()
     val cutoff = System.currentTimeMillis() / 1000 - 24 * 3600
-    return (d.batteryHistory + d.analysis.ringBattery.filter { it.ts >= cutoff }).sortedBy { it.ts }.map { it.pct.toDouble() }
+    return (d.batteryHistory + d.analysis.ringBattery.filter { it.ts >= cutoff }).sortedBy { it.ts }.map { it.ts to it.pct.toDouble() }
 }
 
 // ---------------- developer mode ----------------

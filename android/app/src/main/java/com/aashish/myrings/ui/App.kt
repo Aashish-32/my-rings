@@ -194,15 +194,21 @@ private fun Pill(text: String, color: Color) {
 
 /** ‹ Today › : steps through the days the ring has recorded. */
 @Composable
-private fun DayHeader(dates: List<String>, selected: String, onSelect: (String) -> Unit) {
+private fun DayHeader(dates: List<String>, selected: String, onSelect: (String) -> Unit, week: Boolean = false) {
     val a = MaterialTheme.aura
     val i = dates.indexOf(selected)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         NavArrow(Glyph.ChevronLeft, enabled = i > 0) { onSelect(dates[i - 1]) }
         AnimatedContent(selected, Modifier.weight(1f), transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(120)) }, label = "day") { d ->
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(dayLabel(d, dates.last()), style = AuraType.Title)
-                Text(java.time.LocalDate.parse(d).format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d")), fontSize = 12.sp, color = a.ink3)
+                if (week) {
+                    val end = java.time.LocalDate.parse(d); val fmt = java.time.format.DateTimeFormatter.ofPattern("MMM d")
+                    Text(if (d == dates.last()) "This week" else "Week ending ${end.format(fmt)}", style = AuraType.Title)
+                    Text("${end.minusDays(6).format(fmt)} – ${end.format(fmt)}", fontSize = 12.sp, color = a.ink3)
+                } else {
+                    Text(dayLabel(d, dates.last()), style = AuraType.Title)
+                    Text(java.time.LocalDate.parse(d).format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMMM d")), fontSize = 12.sp, color = a.ink3)
+                }
             }
         }
         NavArrow(Glyph.ChevronRight, enabled = i < dates.size - 1) { onSelect(dates[i + 1]) }
@@ -233,8 +239,10 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
     if (d == null) { LoadingSkeleton(); return }
     val series = d.analysis.days
     val a = MaterialTheme.aura
+    var week by rememberSaveable { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         if (series.isEmpty()) {
+            item { ProfilePrompt(vm, null) }
             item { Onboarding(ring) }
             return@LazyColumn
         }
@@ -246,7 +254,13 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
         val rd = night?.readiness?.value
         val sl = night?.sleepScore?.value
 
-        item { DayHeader(dates, day, onDay) }
+        item { ProfilePrompt(vm, d.analysis.profile) }
+        item { DayHeader(dates, day, onDay, week) }
+        item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { SegmentedToggle(listOf("Day", "Week"), if (week) 1 else 0) { week = it == 1 } } }
+        if (week) {
+            item { WeekView(d.analysis, day) }
+            return@LazyColumn
+        }
         item {
             Column(Modifier.fillMaxWidth().fadeUp(1), horizontalAlignment = Alignment.CenterHorizontally) {
                 ConcentricRings(
@@ -284,11 +298,14 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
                 "${m.title} is ${"%.${m.dec}f".format(abs(c - b))} ${m.unit} ${if (c > b) "higher" else "lower"} than your 7-day average."
             else null
         }
-        if (insights.isNotEmpty()) {
+        // a metric that has drifted from the person's own normal for several days gets a calm heads-up
+        val drift = com.aashish.myrings.data.Drift.notes(series.map { it.restingHr }, series.map { it.temp })
+        val allNotes = drift + insights
+        if (allNotes.isNotEmpty()) {
             item {
                 Column(Modifier.fadeUp(4), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Worth noticing")
-                    insights.forEach { t ->
+                    allNotes.forEach { t ->
                         Row(verticalAlignment = Alignment.Top) {
                             Box(Modifier.padding(top = 8.dp).size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
                             Spacer(Modifier.width(12.dp))
@@ -326,6 +343,7 @@ private fun VitalsPanel(series: List<DaySummary>, modifier: Modifier = Modifier)
                     val base = series.dropLast(1).takeLast(7).mapNotNull(m.pick).let { if (it.isEmpty()) null else it.average() }
                     val day = last.firstOrNull { m.pick(it) != null }
                     val daytime = when (m.title) { "Resting heart rate" -> day?.restingSrc; "Heart rate variability" -> day?.hrvSrc; else -> null } == "daytime"
+                    var scrub by remember { mutableStateOf<Int?>(null) }
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AuraIcon(glyph, tint, size = 16.dp)
@@ -336,7 +354,10 @@ private fun VitalsPanel(series: List<DaySummary>, modifier: Modifier = Modifier)
                             CountUpText(cur, AuraType.Figure, MaterialTheme.colorScheme.onSurface, decimals = m.dec, delayMs = 250 + (row * 2 + col) * 80)
                             Text(" ${m.unit}", fontSize = 12.sp, color = a.ink3, modifier = Modifier.padding(bottom = 4.dp))
                         }
+                        val trendDays = series.takeLast(14).filter { m.pick(it) != null }
+                        val scrubbed = scrub?.let { trendDays.getOrNull(it) }
                         val note = when {
+                            scrubbed != null -> "${java.time.LocalDate.parse(scrubbed.date).format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d"))} · ${"%.${m.dec}f".format(m.pick(scrubbed))} ${m.unit}"
                             cur == null -> if (m.title == "Blood oxygen" || m.title == "Resting heart rate") "Appears after a night's sleep" else "No reading yet"
                             base == null -> if (daytime) "Daytime estimate" else "Building your baseline"
                             else -> {
@@ -345,10 +366,10 @@ private fun VitalsPanel(series: List<DaySummary>, modifier: Modifier = Modifier)
                                 if (abs(diff) < tol) "In line with your average" else "${if (diff > 0) "▲" else "▼"} ${"%.${m.dec}f".format(abs(diff))} ${m.unit}"
                             }
                         }
-                        Text(note, fontSize = 11.5.sp, color = if (daytime && base == null) Palette.Warn else a.ink3, modifier = Modifier.padding(top = 2.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(note, fontSize = 11.5.sp, color = if (scrubbed != null) tint else if (daytime && base == null) Palette.Warn else a.ink3, modifier = Modifier.padding(top = 2.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         // a trend needs at least two days; until then show nothing rather than an empty gap
                         val trend = series.takeLast(14).mapNotNull(m.pick)
-                        if (trend.size >= 2) { Spacer(Modifier.height(6.dp)); Spark(trend, tint, height = 34.dp) }
+                        if (trend.size >= 2) { Spacer(Modifier.height(6.dp)); Spark(trend, tint, height = 34.dp, onScrub = { scrub = it }) }
                     }
                 }
             }
@@ -420,17 +441,28 @@ private fun ActivityScreen(vm: AppViewModel, selDay: String?, onDay: (String) ->
     val d = detail
     if (d == null) { LoadingSkeleton(); return }
     val series = d.analysis.days
+    var cursor by remember { mutableStateOf<Long?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (series.isEmpty()) { item { EmptyTab(Glyph.Pulse, "No activity yet", "Heart rate, movement and temperature charts appear after the ring has been worn and synced.") }; return@LazyColumn }
         val dates = series.map { it.date }
         val day = selDay?.takeIf { it in dates } ?: dates.last()
         val intra = d.analysis.intraday[day]
+        val night = d.analysis.nights.lastOrNull { it.date == day }
+        val sleepBand = night?.let { listOf(it.start to it.end) } ?: emptyList()
+        val prev = d.analysis.intraday[java.time.LocalDate.parse(day).minusDays(1).toString()]
+        // yesterday's readings moved onto today's clock so the two lines line up by time of day
+        fun shifted(l: List<Pair<Long, Double>>?) = l.orEmpty().map { (t, v) -> (t + 86_400L) to v }
         item { DayHeader(dates, day, onDay) }
         item { Box(Modifier.fadeUp(1)) { ActivityCard(series.first { it.date == day }) } }
         if (intra != null) {
-            item { Box(Modifier.fadeUp(2)) { TimeChart("Heart rate · 5-min median", intra.hr, Palette.Bad, "bpm", caption = "Good-quality beats while worn.") } }
-            item { Box(Modifier.fadeUp(3)) { TimeChart("Activity level · MET per minute", intra.met, Palette.Ember, "MET", 1, bars = true, marks = intra.alerts, caption = "Dashed lines: move reminders from the ring.") } }
-            item { Box(Modifier.fadeUp(4)) { TimeChart("Skin temperature", intra.temp, Palette.Warn, "°C", 1, caption = "Only while worn.") } }
+            item { Box(Modifier.fadeUp(2)) { DayHighlights(intra) } }
+            item {
+                Text("Press and drag on any chart: the time cursor moves on all three, so you can see what your heart rate did while you were moving.",
+                    fontSize = 12.sp, color = MaterialTheme.aura.ink3, modifier = Modifier.padding(horizontal = 4.dp))
+            }
+            item { Box(Modifier.fadeUp(3)) { TimeChart("Heart rate · 5-min median", intra.hr, Palette.Bad, "bpm", caption = "Good-quality beats while worn.", cursor = cursor, onCursor = { cursor = it }, bands = sleepBand, compare = shifted(prev?.hr)) } }
+            item { Box(Modifier.fadeUp(4)) { TimeChart("Activity level · MET per minute", intra.met, Palette.Ember, "MET", 1, bars = true, marks = intra.alerts, caption = "Dashed lines: move reminders from the ring.", cursor = cursor, onCursor = { cursor = it }, describe = { metWord(it) }) } }
+            item { Box(Modifier.fadeUp(5)) { TimeChart("Skin temperature", intra.temp, Palette.Warn, "°C", 1, caption = "Only while worn.", cursor = cursor, onCursor = { cursor = it }, bands = sleepBand, compare = shifted(prev?.temp)) } }
         }
     }
 }
@@ -462,6 +494,7 @@ private fun RingTab(vm: AppViewModel, ring: RingUi, onAdd: () -> Unit) {
     val stale = b != null && now / 1000 - b.ts > 2 * 3600
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+        item { Box(Modifier.fadeUp(0)) { ProfileCard(vm, detail?.analysis?.profile) } }
         item {
             Column(Modifier.fillMaxWidth().fadeUp(0), horizontalAlignment = Alignment.CenterHorizontally) {
                 Gauge(b?.pct, size = 176.dp)
@@ -500,10 +533,26 @@ private fun RingTab(vm: AppViewModel, ring: RingUi, onAdd: () -> Unit) {
             }
         }
 
-        val warnings = detail?.analysis?.warnings.orEmpty()
+        item { Box(Modifier.fadeUp(3)) { TimeChart("Battery · last 24 hours", batteryPoints(detail), Palette.Good, "%", caption = "Includes the ring's own records, which arrive with each sync.") } }
+
+        item {
+            Row(Modifier.fillMaxWidth().fadeUp(4), verticalAlignment = Alignment.CenterVertically) {
+                AuraIcon(Glyph.Code, a.ink2, size = 20.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Developer mode", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Raw events, keys and the activity log", fontSize = 12.sp, color = a.ink3)
+                }
+                Switch(dev, vm::setDev)
+            }
+        }
+        if (dev) item { DevPanel(vm, ring) }
+        item { Box(Modifier.fadeUp(5)) { AuraButton("Add another ring", Glyph.Plus, filled = false, modifier = Modifier.fillMaxWidth()) { onAdd() } } }
+        // Ring health sits last. Everyone sees battery drain; firmware resets, timing glitches and radio stats are developer-only.
+        val warnings = detail?.analysis?.warnings.orEmpty().filter { dev || !it.devOnly }
         if (warnings.isNotEmpty()) {
             item {
-                Column(Modifier.fadeUp(2), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.fadeUp(6), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     SectionHeader("Ring health")
                     warnings.forEach { w ->
                         val c = when (w.level) { "bad" -> Palette.Bad; "warn" -> Palette.Warn; else -> Palette.Good }
@@ -519,28 +568,26 @@ private fun RingTab(vm: AppViewModel, ring: RingUi, onAdd: () -> Unit) {
                 }
             }
         }
-
-        item {
-            Panel(Modifier.fillMaxWidth().fadeUp(3)) {
-                SectionHeader("Battery", "last 24 hours")
-                Spacer(Modifier.height(10.dp))
-                Spark(batteryPoints(detail), Palette.Good, height = 84.dp, emptyText = "Collecting readings…")
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth().fadeUp(4), verticalAlignment = Alignment.CenterVertically) {
-                AuraIcon(Glyph.Code, a.ink2, size = 20.dp)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Developer mode", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("Raw events, keys and the activity log", fontSize = 12.sp, color = a.ink3)
-                }
-                Switch(dev, vm::setDev)
-            }
-        }
-        if (dev) item { DevPanel(vm, ring) }
-        item { Box(Modifier.fadeUp(5)) { AuraButton("Add another ring", Glyph.Plus, filled = false, modifier = Modifier.fillMaxWidth()) { onAdd() } } }
     }
     if (renaming) RenameDialog(ring.row.name, onDismiss = { renaming = false }) { vm.rename(it); renaming = false }
+}
+
+
+/** A two-option pill switch whose highlight glides between the options. */
+@Composable
+private fun SegmentedToggle(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    val a = MaterialTheme.aura
+    val primary = MaterialTheme.colorScheme.primary
+    val segW = 84.dp
+    val offset by androidx.compose.animation.core.animateDpAsState(segW * selected, androidx.compose.animation.core.spring(0.8f, 420f), label = "seg")
+    Box(Modifier.clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)).padding(3.dp)) {
+        Box(Modifier.offset(x = offset).width(segW).height(34.dp).clip(RoundedCornerShape(19.dp)).background(primary.copy(alpha = if (a.isDark) 0.22f else 0.16f)))
+        Row {
+            options.forEachIndexed { i, label ->
+                Box(Modifier.width(segW).height(34.dp).clip(RoundedCornerShape(19.dp)).pressScale({ onSelect(i) }), contentAlignment = Alignment.Center) {
+                    Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (i == selected) primary else a.ink2)
+                }
+            }
+        }
+    }
 }

@@ -31,6 +31,16 @@ data class DaySummary(
     val inactiveMin: Int = 0,
     val moveAlerts: Int = 0,
     val metMinutes: Int = 0,
+    /** Resting burn (Schofield BMR) plus active calories; for today, BMR counts only the part of the day so far. */
+    val totalKcal: Int? = null,
+)
+
+/** The body profile the numbers were computed with, and where each value came from ("you", "ring" or "default"). */
+data class UsedProfile(
+    val weightKg: Double, val weightFrom: String,
+    val age: Int?, val ageFrom: String,
+    val sex: Sex, val sexFrom: String,
+    val bmrKcal: Int, val vo2max: Double?,
 )
 
 /** One main sleep period (a ring `bedtime_period` of 3 h or more), dated by the morning it ended. */
@@ -60,7 +70,8 @@ data class Intraday(
     val alerts: List<Long>,
 )
 
-data class HealthWarning(val level: String, val title: String, val detail: String)
+/** A ring-health note. [devOnly] ones (firmware resets, timing glitches, radio stats) show only in developer mode. */
+data class HealthWarning(val level: String, val title: String, val detail: String, val devOnly: Boolean = false)
 data class Reboot(val ts: Long, val reason: Int?, val label: String)
 
 data class Analysis(
@@ -75,6 +86,7 @@ data class Analysis(
     val intraday: Map<String, Intraday> = emptyMap(),
     /** Firmware log lines (debug_event + debug_data text), oldest first. */
     val logs: List<Pair<Long, String>> = emptyList(),
+    val profile: UsedProfile? = null,
 )
 
 /**
@@ -84,7 +96,6 @@ data class Analysis(
 object Analytics {
     private const val WORN_TEMP_C = 30.0 // probe-0 at/above this means the ring is on a finger
     private const val BUCKET = 300L // 5-minute buckets for HR / temperature / HRV
-    private const val WEIGHT_KG = 70.0
     private const val WINDOW_DAYS = 60L // analysed history; baselines need 14
     private const val MIN_NIGHT_S = 3 * 3600L
     private const val STRESS_MAX_MET = 1.8 // the stress model rejects active samples above this
@@ -92,7 +103,7 @@ object Analytics {
     /** SpO2 "simple" quadratic for Gen 4 hardware, from the app (open_oura docs/spo2-calibration.md). */
     private fun spo2FromR(r: Double) = (-13.4 * r * r - 5.1 * r + 105.2).coerceIn(85.0, 100.0)
 
-    private val cache = HashMap<String, Pair<Pair<Long, Long>, Analysis>>()
+    private val cache = HashMap<String, Pair<Any, Analysis>>() // key: (event stamp, profile)
 
     /**
      * Wall-clock time a `time_sync` event marks. Older syncs (this app before the time-sync fix, and the open_oura
@@ -130,18 +141,19 @@ object Analytics {
     }
 
     fun analyze(store: Store, serial: String, zone: ZoneId = ZoneId.systemDefault()): Analysis {
-        val stamp = store.eventStamp(serial)
+        val profile = store.profile(serial)
+        val stamp = store.eventStamp(serial) to profile // editing the profile recomputes calories and scores
         cache[serial]?.let { if (it.first == stamp) return it.second }
         val clock = Clock.from(store.timeSyncs(serial))
             ?: return Analysis(emptyList(), emptyList(), emptyList(), emptyList(), null).also { cache[serial] = stamp to it }
         val from = maxOf(0L, store.newestRingTs(serial) - WINDOW_DAYS * 86400 * 10)
-        val result = compute(clock, zone) { sink -> store.forEachEvent(serial, from) { tag, _, ts, body, _ -> sink(tag, ts, body) } }
+        val result = compute(clock, zone, profile) { sink -> store.forEachEvent(serial, from) { tag, _, ts, body, _ -> sink(tag, ts, body) } }
         cache[serial] = stamp to result
         return result
     }
 
     /** Pure analysis over a stream of (tag, ring_ts, body); [source] calls the sink once per event in ring-time order. */
-    fun compute(clock: Clock, zone: ZoneId, source: ((Int, Long, ByteArray) -> Unit) -> Unit): Analysis {
+    fun compute(clock: Clock, zone: ZoneId, profile: Profile = Profile(), source: ((Int, Long, ByteArray) -> Unit) -> Unit): Analysis {
         val beats = TreeMap<Long, MutableList<Double>>() // 5-min bucket -> bpm (green IBI, good quality)
         val beats60 = TreeMap<Long, MutableList<Double>>() // fallback beat stream (ibi_and_amplitude)
         val rr = TreeMap<Long, MutableList<Double>>() // 5-min bucket -> squared successive differences
@@ -175,7 +187,7 @@ object Analytics {
         val reboots = ArrayList<Reboot>()
         val bleTimes = ArrayList<Long>()
         val logs = ArrayList<Pair<Long, String>>()
-        var weight = WEIGHT_KG
+        var ringProfile: Profile? = null // the ring's stored user_information, unless it's the factory default
         var wdt = 0; var negT = 0
 
         fun nums(m: Map<String, Any?>, k: String) = (m[k] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }.orEmpty()
@@ -197,7 +209,12 @@ object Analytics {
                     val r = (m["reason"] as? Number)?.toInt()
                     reboots += Reboot(t, r, RESET_REASONS[r] ?: "reason $r")
                 }
-                0x5c -> (m["weight_kg"] as? Number)?.toDouble()?.takeIf { it > 0 }?.let { weight = it }
+                0x5c -> {
+                    val age = (m["age_years"] as Number).toInt(); val kg = (m["weight_kg"] as Number).toInt()
+                    val sx = (m["sex_code"] as Number).toInt(); val cm = (m["height_cm"] as Number).toInt()
+                    if (!Metabolic.isRingFactoryProfile(age, kg, sx, cm) && kg > 0)
+                        ringProfile = Profile(kg.toDouble(), cm.toDouble(), LocalDate.now(zone).year - age, Sex.from(sx))
+                }
                 0x80 -> { // green IBI + quality: the cleanest beat stream
                     val ibis = nums(m, "ibi_ms"); val qs = nums(m, "quality")
                     val b = t / BUCKET * BUCKET
@@ -240,6 +257,19 @@ object Analytics {
                 0x5b -> if (body.isNotEmpty() && body[0].toInt() == 2) bleTimes += t
             }
         }
+
+        // ---- the body profile in effect: yours, else the ring's stored one, else defaults ----
+        val rp = ringProfile
+        val weight = profile.weightKg ?: rp?.weightKg ?: Metabolic.FALLBACK_WEIGHT_KG
+        val age = profile.ageYears(LocalDate.now(zone)) ?: rp?.ageYears(LocalDate.now(zone))
+        val sex = if (profile.sex != Sex.UNSPECIFIED) profile.sex else rp?.sex ?: Sex.UNSPECIFIED
+        val bmr = Metabolic.bmrSchofield(age ?: Metabolic.FALLBACK_AGE, sex, weight)
+        val used = UsedProfile(
+            weight, if (profile.weightKg != null) "you" else if (rp?.weightKg != null) "ring" else "default",
+            age, if (profile.birthYear != null) "you" else if (rp != null) "ring" else "default",
+            sex, if (profile.sex != Sex.UNSPECIFIED) "you" else if (rp != null && rp.sex != Sex.UNSPECIFIED) "ring" else "default",
+            bmr.roundToInt(), age?.let { Metabolic.vo2maxJackson(it, sex, weight) }?.let { Math.round(it * 10) / 10.0 },
+        )
 
         fun dateOf(t: Long) = Instant.ofEpochSecond(t).atZone(zone).toLocalDate().toString()
         fun median(a: List<Double>): Double? { if (a.isEmpty()) return null; val s = a.sorted(); val n = s.size; return if (n % 2 == 1) s[n / 2] else (s[n / 2 - 1] + s[n / 2]) / 2 }
@@ -327,7 +357,7 @@ object Analytics {
 
         val nights = raw.mapIndexed { i, n ->
             val prior = raw.subList(maxOf(0, i - Scores.BASELINE_NIGHTS), i)
-            val sleepScore = Scores.sleepScore(n.sleep)
+            val sleepScore = Scores.sleepScore(n.sleep.copy(ageYears = age))
             val tempBase = prior.mapNotNull { it.temp }.takeIf { it.size >= 3 }?.average()
             val tempDev = if (n.temp != null && tempBase != null) n.temp - tempBase else null
             val recent = raw.subList(maxOf(0, i - 2), i + 1).mapNotNull { it.hrv }
@@ -344,6 +374,7 @@ object Analytics {
                 recoveryIndexH = n.recovery,
                 activityBalanceMin = actDays.takeIf { it.size >= 2 }?.average(),
                 nightsOfHistory = i,
+                sleepNeedH = Metabolic.sleepNeedHours(age),
             ))
             Night(
                 n.date, n.w[0], n.w[1], r(n.sleep.inBedMin, 0)!!, r(n.sleep.totalSleepMin, 0)!!,
@@ -406,7 +437,11 @@ object Analytics {
             DaySummary(
                 date = d, restingHr = resting, restingSrc = rsrc, avgHr = r(mean(dayHr)), hrv = hrv, hrvSrc = hsrc,
                 temp = n?.temp ?: r(median(dayTemps.map { it.second }), 2), spo2 = n?.spo2, sleepMin = n?.stages,
-                activeKcal = if (mets.isEmpty()) null else (mets.values.sumOf { maxOf(0.0, it - 1) } * weight / 60).roundToInt(),
+                activeKcal = if (mets.isEmpty()) null else mets.values.sumOf { Metabolic.activeKcalPerMinute(it, weight) }.roundToInt(),
+                totalKcal = if (mets.isEmpty()) null else {
+                    val dayFrac = ((minOf(end, System.currentTimeMillis() / 1000) - start) / 86400.0).coerceIn(0.0, 1.0)
+                    (bmr * dayFrac + mets.values.sumOf { Metabolic.activeKcalPerMinute(it, weight) }).roundToInt()
+                },
                 wornMin = wornMin.toInt(), bleConnections = bleTimes.count { it in start until end },
                 activeMin = mapOf("low" to mets.values.count { it >= 1.5 && it < 3 }, "medium" to mets.values.count { it >= 3 && it < 6 }, "high" to mets.values.count { it >= 6 }),
                 inactiveMin = metsWorn.count { it < 1.5 }, moveAlerts = alerts.count { it in start until end }, metMinutes = mets.size,
@@ -415,16 +450,16 @@ object Analytics {
 
         val sortedBattery = battery.sortedBy { it.ts }
         val drain = batteryDrain(sortedBattery)
-        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs)
+        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs, used)
     }
 
     private fun warnings(reboots: List<Reboot>, negT: Int, drain: Double?, bleTimes: List<Long>): List<HealthWarning> {
         val w = ArrayList<HealthWarning>()
         val wd = reboots.filter { it.reason == 4 }
         if (wd.isNotEmpty()) w += HealthWarning("bad", "${wd.size} watchdog reset(s)",
-            "The firmware hung and restarted itself. Isolated resets during pairing are harmless; repeated ones while worn are worth reporting.")
+            "The firmware hung and restarted itself. Isolated resets during pairing are harmless; repeated ones while worn are worth reporting.", devOnly = true)
         if (negT > 0) w += HealthWarning("warn", "Daytime HR scheduler saw a negative time step ×$negT",
-            "Appears after the ring clock is changed by a time sync; HR samples around it may be skipped.")
+            "Appears after the ring clock is changed by a time sync; HR samples around it may be skipped.", devOnly = true)
         if (drain != null) w += HealthWarning(
             if (drain > 2) "bad" else if (drain > 1) "warn" else "good",
             "Battery draining ${"%.2f".format(drain)}%/h (~${(100 / drain).roundToInt()} h per charge)",
@@ -435,7 +470,7 @@ object Analytics {
             if (span > 0.5) {
                 val perH = recent.size / span
                 w += HealthWarning(if (perH > 6) "bad" else "good", "${"%.1f".format(perH)} Bluetooth connections per hour",
-                    "${recent.size} connections recorded by the ring over the last ${"%.1f".format(span)} h. The Oura app connects only a few times a day.")
+                    "${recent.size} connections recorded by the ring over the last ${"%.1f".format(span)} h. The Oura app connects only a few times a day.", devOnly = true)
             }
         }
         return w

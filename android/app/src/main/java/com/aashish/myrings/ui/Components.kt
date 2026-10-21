@@ -3,6 +3,12 @@ package com.aashish.myrings.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.*
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -63,16 +69,30 @@ fun Gauge(pct: Int?, size: Dp = 140.dp) {
     }
 }
 
-/** Small filled trend line; draws itself in from the left. */
+/**
+ * Small filled trend line; draws itself in from the left. Press or drag to pick a point: [onScrub] receives its index
+ * (null when the finger lifts), so the caller can show the exact date and value.
+ */
 @Composable
-fun Spark(values: List<Double>, color: Color, modifier: Modifier = Modifier, height: Dp = 56.dp, emptyText: String = "More days needed for a trend") {
+fun Spark(
+    values: List<Double>, color: Color, modifier: Modifier = Modifier, height: Dp = 56.dp, emptyText: String = "More days needed for a trend",
+    onScrub: ((Int?) -> Unit)? = null,
+) {
     val muted = MaterialTheme.aura.ink3
     if (values.size < 2) {
         Box(modifier.height(height), contentAlignment = Alignment.CenterStart) { Text(if (values.isEmpty()) "No data yet" else emptyText, fontSize = 12.sp, color = muted) }
         return
     }
     val reveal = animatedProgress(1f, durationMs = 1100)
-    Canvas(modifier.fillMaxWidth().height(height)) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var sel by remember { mutableStateOf<Int?>(null) }
+    var widthPx by remember { mutableFloatStateOf(1f) }
+    fun idxAt(x: Float) = ((x / widthPx).coerceIn(0f, 1f) * (values.size - 1)).roundToInt()
+    fun pick(i: Int?) { if (i != sel) { sel = i; onScrub?.invoke(i); if (i != null) haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove) } }
+    val interactive = if (onScrub == null) Modifier else Modifier
+        .pointerInput(values) { detectTapGestures(onPress = { o -> pick(idxAt(o.x)); tryAwaitRelease(); pick(null) }) }
+        .pointerInput(values) { detectHorizontalDragGestures(onDragStart = { pick(idxAt(it.x)) }, onDragEnd = { pick(null) }, onDragCancel = { pick(null) }) { c, _ -> c.consume(); pick(idxAt(c.position.x)) } }
+    Canvas(modifier.fillMaxWidth().height(height).onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }.then(interactive)) {
         val mn = values.min(); val mx = values.max()
         val pad = (if (mx - mn == 0.0) 1.0 else mx - mn) * 0.25
         val lo = mn - pad; val hi = mx + pad
@@ -84,7 +104,11 @@ fun Spark(values: List<Double>, color: Color, modifier: Modifier = Modifier, hei
             drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = 0.30f), color.copy(alpha = 0f))))
             drawPath(line, color, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
-        if (reveal > 0.98f) drawCircle(color, 3.5.dp.toPx(), Offset(x(values.size - 1), y(values.last())))
+        val s = sel
+        if (s != null) {
+            drawLine(color.copy(alpha = 0.45f), Offset(x(s), 0f), Offset(x(s), size.height), 1.dp.toPx())
+            drawCircle(Color.White.copy(alpha = 0.9f), 5.dp.toPx(), Offset(x(s), y(values[s]))); drawCircle(color, 3.5.dp.toPx(), Offset(x(s), y(values[s])))
+        } else if (reveal > 0.98f) drawCircle(color, 3.5.dp.toPx(), Offset(x(values.size - 1), y(values.last())))
     }
 }
 

@@ -176,34 +176,6 @@ fun SleepDetails(n: Night) {
     n.breathRate?.let { Stat("Breathing rate", "%.1f /min".format(it)) }
 }
 
-/** Classic hypnogram: one row per stage (awake on top, deep at the bottom), a block per run of 30 s epochs. */
-@Composable
-fun Hypnogram(epochs: List<String>, start: Long, end: Long) {
-    val rows = listOf("awake" to Palette.Awake, "rem" to Palette.Rem, "light" to Palette.StageLight, "deep" to Palette.Deep)
-    val label = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth().height(84.dp)) {
-        Column(Modifier.fillMaxHeight().padding(end = 6.dp), verticalArrangement = Arrangement.SpaceAround) {
-            listOf("Awake", "REM", "Light", "Deep").forEach { Text(it, fontSize = 10.sp, color = label) }
-        }
-        Canvas(Modifier.weight(1f).fillMaxHeight()) {
-            val rowH = size.height / rows.size
-            val w = size.width / epochs.size
-            var i = 0
-            while (i < epochs.size) {
-                var j = i
-                while (j < epochs.size && epochs[j] == epochs[i]) j++
-                val r = rows.indexOfFirst { it.first == epochs[i] }.coerceAtLeast(0)
-                drawRect(rows[r].second, Offset(i * w, r * rowH + rowH * 0.15f), Size((j - i) * w, rowH * 0.7f))
-                i = j
-            }
-        }
-    }
-    Row(Modifier.fillMaxWidth().padding(start = 40.dp)) {
-        Text(clock(start), fontSize = 10.5.sp, color = label, modifier = Modifier.weight(1f))
-        Text(clock(end), fontSize = 10.5.sp, color = label)
-    }
-}
-
 @Composable
 fun StressCard(s: StressDay?) {
     Panel(Modifier.fillMaxWidth()) {
@@ -261,49 +233,12 @@ fun ActivityCard(d: DaySummary) {
         }
         Spacer(Modifier.height(6.dp))
         Stat("Low / medium / high activity", "${z["low"] ?: 0} / ${z["medium"] ?: 0} / ${z["high"] ?: 0} min")
+        d.totalKcal?.let { Stat("Total burn (resting + active)", "$it kcal") }
         Stat("Inactive time", hm(d.inactiveMin.toDouble()))
         Stat("Move reminders", "${d.moveAlerts}")
         Stat("Time wearing the ring", hm(d.wornMin.toDouble()))
         d.avgHr?.let { Stat("Average heart rate (awake)", "${it.roundToInt()} bpm") }
-        Text("Calories use the ring's per-minute MET and a 70 kg default weight. Steps need the ring's real-steps feature, which isn't reporting yet.",
+        Text("Calories use the ring's per-minute MET and your profile (Ring tab → Your body). Steps need the ring's real-steps feature, which isn't reporting yet.",
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-    }
-}
-
-/** Time-axis chart for one day: a line (with gaps) or bars; [marks] draws dashed vertical lines. */
-@Composable
-fun TimeChart(title: String, points: List<Pair<Long, Double>>, color: Color, unit: String, dec: Int = 0, bars: Boolean = false, marks: List<Long> = emptyList(), caption: String? = null) {
-    Panel(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(title, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            if (points.isNotEmpty()) Text("%.${dec}f–%.${dec}f $unit".format(points.minOf { it.second }, points.maxOf { it.second }), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        }
-        if (points.size < 2) { Text("Not enough data for this day", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); return@Panel }
-        val warn = Palette.Warn
-        val grid = MaterialTheme.colorScheme.outline
-        Canvas(Modifier.fillMaxWidth().height(120.dp).padding(top = 8.dp)) {
-            val t0 = points.first().first; val t1 = points.last().first
-            var lo = points.minOf { it.second }; val hi0 = points.maxOf { it.second }
-            if (bars) lo = 0.0
-            val pad = (hi0 - lo).coerceAtLeast(1.0) * 0.12
-            val hi = hi0 + pad; val low = if (bars) 0.0 else lo - pad
-            fun x(t: Long) = ((t - t0).toFloat() / (t1 - t0).coerceAtLeast(1)) * size.width
-            fun y(v: Double) = ((1 - (v - low) / (hi - low)) * size.height).toFloat()
-            for (f in listOf(0.25f, 0.5f, 0.75f)) drawLine(grid, Offset(0f, size.height * f), Offset(size.width, size.height * f), 1f)
-            marks.filter { it in t0..t1 }.forEach { drawLine(warn, Offset(x(it), 0f), Offset(x(it), size.height), 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))) }
-            if (bars) {
-                val w = (size.width / ((t1 - t0) / 60f).coerceAtLeast(1f)).coerceAtLeast(1.5f)
-                points.forEach { (t, v) -> drawRect(color, Offset(x(t) - w / 2, y(v)), Size(w, size.height - y(v))) }
-            } else {
-                val path = Path()
-                points.forEachIndexed { i, (t, v) -> if (i == 0 || t - points[i - 1].first > 1200) path.moveTo(x(t), y(v)) else path.lineTo(x(t), y(v)) }
-                drawPath(path, color, style = Stroke(2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-            }
-        }
-        Row(Modifier.fillMaxWidth()) {
-            Text(clock(points.first().first), fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            Text(clock(points.last().first), fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        caption?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

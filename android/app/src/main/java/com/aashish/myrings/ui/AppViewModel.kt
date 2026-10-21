@@ -142,4 +142,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun resetPair() { _pair.value = PairState() }
+
+    /** The selected ring's wearer profile (what the user entered; empty if never set). */
+    suspend fun loadProfile(): Profile? = _selected.value?.let { s -> withContext(Dispatchers.IO) { mgr.store.profile(s) } }
+
+    /** True once the user chose "Not now" on the home-screen profile prompt for the selected ring. */
+    fun profilePromptDismissed(): Boolean = _selected.value?.let { prefs.getBoolean("profilePromptDismissed:$it", false) } ?: true
+    fun dismissProfilePrompt() { _selected.value?.let { prefs.edit().putBoolean("profilePromptDismissed:$it", true).apply() } }
+
+    /** Save the wearer profile and recompute calories and scores with it. */
+    fun saveProfile(p: Profile) {
+        val s = _selected.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            mgr.store.saveProfile(s, p)
+            loadDetail(s)
+            _snack.emit("Profile saved — calories and scores updated")
+        }
+    }
 }
