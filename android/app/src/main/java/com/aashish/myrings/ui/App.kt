@@ -453,6 +453,7 @@ private fun SleepScreen(vm: AppViewModel, selDay: String?, onDay: (String) -> Un
             item { Box(Modifier.fadeUp(2)) { SleepDebtPanel(debt, d.analysis.profile?.age?.let { com.aashish.myrings.data.Metabolic.sleepNeedHours(it) } ?: com.aashish.myrings.data.Metabolic.sleepNeedHours(null)) } }
         }
         item { Box(Modifier.fadeUp(2)) { ScoreCard("Readiness", night?.readiness, "Appears after the ring records a night's sleep.") } }
+        d.analysis.resilience?.let { r -> item { Box(Modifier.fadeUp(2)) { ResilienceCard(r) } } }
         item { Box(Modifier.fadeUp(3)) { StressCard(d.analysis.stress[day]) } }
     }
 }
@@ -477,6 +478,12 @@ private fun ActivityScreen(vm: AppViewModel, selDay: String?, onDay: (String) ->
         item { DayHeader(dates, day, onDay) }
         item { Box(Modifier.fadeUp(1)) { ScoreCard("Activity", d.analysis.activity[day], "Appears once the ring has a few hours of data for the day.") } }
         item { Box(Modifier.fadeUp(1)) { ActivityCard(series.first { it.date == day }) } }
+        item {
+            val walk by vm.walkStart.collectAsState()
+            Box(Modifier.fadeUp(1)) {
+                StepsCard(series.first { it.date == day }, d.analysis.stepsNote, d.analysis.stepsScale, walk, vm::startStepWalk, vm::finishStepWalk, vm::cancelStepWalk)
+            }
+        }
         val dayWorkouts = d.analysis.workouts[day].orEmpty()
         item { Box(Modifier.fadeUp(2)) { WorkoutsPanel(dayWorkouts) } }
         if (intra != null) {

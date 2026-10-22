@@ -238,7 +238,7 @@ fun ActivityCard(d: DaySummary) {
         Stat("Move reminders", "${d.moveAlerts}")
         Stat("Time wearing the ring", hm(d.wornMin.toDouble()))
         d.avgHr?.let { Stat("Average heart rate (awake)", "${it.roundToInt()} bpm") }
-        Text("Calories use the ring's per-minute MET and your profile (Ring tab → Your body). Steps need the ring's real-steps feature, which isn't reporting yet.",
+        Text("Calories use the ring's per-minute MET and your profile (Ring tab → Your body).",
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
     }
 }

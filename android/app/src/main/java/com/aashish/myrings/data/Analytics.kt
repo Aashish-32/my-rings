@@ -33,6 +33,8 @@ data class DaySummary(
     val metMinutes: Int = 0,
     /** Resting burn (Schofield BMR) plus active calories; for today, BMR counts only the part of the day so far. */
     val totalKcal: Int? = null,
+    /** Estimated steps (see [Steps]); not Oura's count. */
+    val steps: Int? = null,
 )
 
 /** The body profile the numbers were computed with, and where each value came from ("you", "ring" or "default"). */
@@ -93,6 +95,11 @@ data class Analysis(
     val workouts: Map<String, List<Workout>> = emptyMap(),
     /** Estimated Activity score per date. */
     val activity: Map<String, Score> = emptyMap(),
+    /** Our resilience estimate over the last two weeks (see [ResilienceEstimate]). */
+    val resilience: Resilience? = null,
+    /** Outcome of the last step calibration walk, for the app to show. */
+    val stepsNote: String? = null,
+    val stepsScale: Double = 1.0,
 )
 
 /**
@@ -148,18 +155,25 @@ object Analytics {
 
     fun analyze(store: Store, serial: String, zone: ZoneId = ZoneId.systemDefault()): Analysis {
         val profile = store.profile(serial)
-        val stamp = store.eventStamp(serial) to profile // editing the profile recomputes calories and scores
+        // editing the profile or calibrating steps recomputes calories, scores and steps
+        fun stamp() = Triple(store.eventStamp(serial), profile, Steps.scale(store, serial) to store.meta("${Steps.PENDING_KEY}_$serial"))
+        val stamp = stamp()
         cache[serial]?.let { if (it.first == stamp) return it.second }
         val clock = Clock.from(store.timeSyncs(serial))
             ?: return Analysis(emptyList(), emptyList(), emptyList(), emptyList(), null).also { cache[serial] = stamp to it }
         val from = maxOf(0L, store.newestRingTs(serial) - WINDOW_DAYS * 86400 * 10)
-        val result = compute(clock, zone, profile) { sink -> store.forEachEvent(serial, from) { tag, _, ts, body, _ -> sink(tag, ts, body) } }
-        cache[serial] = stamp to result
+        fun run(scale: Double) = compute(clock, zone, profile, scale) { sink -> store.forEachEvent(serial, from) { tag, _, ts, body, _ -> sink(tag, ts, body) } }
+        var scale = Steps.scale(store, serial)
+        var result = run(scale)
+        // a counted walk waiting for the ring's minutes: once they have arrived, fit the step scale to it and recompute
+        if (Steps.applyPending(store, serial, result.intraday.values.flatMap { it.met }.toMap())) { scale = Steps.scale(store, serial); result = run(scale) }
+        result = result.copy(stepsNote = store.meta("${Steps.RESULT_KEY}_$serial")?.takeIf { it.isNotEmpty() }, stepsScale = scale)
+        cache[serial] = stamp() to result
         return result
     }
 
     /** Pure analysis over a stream of (tag, ring_ts, body); [source] calls the sink once per event in ring-time order. */
-    fun compute(clock: Clock, zone: ZoneId, profile: Profile = Profile(), source: ((Int, Long, ByteArray) -> Unit) -> Unit): Analysis {
+    fun compute(clock: Clock, zone: ZoneId, profile: Profile = Profile(), stepsScale: Double = 1.0, source: ((Int, Long, ByteArray) -> Unit) -> Unit): Analysis {
         val beats = TreeMap<Long, MutableList<Double>>() // 5-min bucket -> bpm (green IBI, good quality)
         val beats60 = TreeMap<Long, MutableList<Double>>() // fallback beat stream (ibi_and_amplitude)
         val rr = TreeMap<Long, MutableList<Double>>() // 5-min bucket -> squared successive differences
@@ -462,6 +476,7 @@ object Analytics {
                 },
                 wornMin = wornMin.toInt(), bleConnections = bleTimes.count { it in start until end },
                 activeMin = mapOf("low" to mets.values.count { it >= 1.5 && it < 3 }, "medium" to mets.values.count { it >= 3 && it < 6 }, "high" to mets.values.count { it >= 6 }),
+                steps = if (mets.isEmpty()) null else Steps.estimate(metsWorn, stepsScale),
                 inactiveMin = metsWorn.count { it < 1.5 }, moveAlerts = alerts.count { it in start until end }, metMinutes = mets.size,
             )
         }
@@ -478,7 +493,8 @@ object Analytics {
 
         val sortedBattery = battery.sortedBy { it.ts }
         val drain = batteryDrain(sortedBattery)
-        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs, used, workouts = workouts, activity = activity)
+        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs, used, workouts = workouts, activity = activity,
+            resilience = ResilienceEstimate.estimate(nights, stress))
     }
 
     private fun warnings(reboots: List<Reboot>, negT: Int, drain: Double?, bleTimes: List<Long>): List<HealthWarning> {

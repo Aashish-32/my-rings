@@ -60,6 +60,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val measure: StateFlow<MeasureState> = _measure
     private var measureJob: kotlinx.coroutines.Job? = null
 
+    private val _walkStart = MutableStateFlow<Long?>(null)
+    /** When the step-calibration walk was started (unix seconds), or null when no walk is under way. */
+    val walkStart: StateFlow<Long?> = _walkStart
+
+    fun startStepWalk() { _walkStart.value = System.currentTimeMillis() / 1000 }
+    fun cancelStepWalk() { _walkStart.value = null }
+
+    /** Save the walk; the scale is worked out at the next sync, once the ring has sent the minutes that cover it. */
+    fun finishStepWalk(counted: Int) {
+        val serial = _selected.value ?: return
+        val start = _walkStart.value ?: return
+        _walkStart.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            mgr.store.setMeta("${com.aashish.myrings.data.Steps.PENDING_KEY}_$serial", "$start|${System.currentTimeMillis() / 1000}|$counted")
+            loadDetail(serial)
+        }
+        toast("Walk saved. Sync in a few minutes to fit your steps to it.")
+    }
+
     private val _snack = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snack: SharedFlow<String> = _snack
 
