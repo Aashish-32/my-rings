@@ -55,7 +55,7 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
 
     // ---- rings ----
     @Synchronized fun rings(): List<RingRow> = readableDatabase.rawQuery(
-        "select r.serial, r.name, r.address, r.key_hex, d.firmware, s.last_sync_unix from rings r " +
+        "select r.serial, r.name, r.address, r.key_hex, d.firmware, nullif(s.last_sync_unix, 0) from rings r " +
             "left join device d on d.serial = r.serial left join sync_state s on s.serial = r.serial order by r.added_unix", null
     ).use { c ->
         buildList {
@@ -190,8 +190,12 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
                 }
                 if (db.insertWithOnConflict("events", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L) inserted++
             }
-            val s = ContentValues().apply { put("serial", serial); put("next_cursor", nextCursor); put("last_sync_unix", now) }
-            db.insertWithOnConflict("sync_state", null, s, SQLiteDatabase.CONFLICT_REPLACE)
+            // moves the cursor only: a saved batch is not a finished sync, so a sync that fails later must not look like it succeeded.
+            // touchSync() sets the sync time once the whole drain is done. 0 means "never" (shown as such by rings()).
+            db.execSQL(
+                "insert into sync_state(serial, next_cursor, last_sync_unix) values(?,?,0) on conflict(serial) do update set next_cursor=excluded.next_cursor",
+                arrayOf(serial, nextCursor)
+            )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()

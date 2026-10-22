@@ -81,9 +81,9 @@ class RingWidget : AppWidgetProvider() {
             val sleep = p.getInt("sleep", -1)
             val batt = p.getInt("batt", -1)
             val now = System.currentTimeMillis() / 1000
-            val newest = maxOf(p.getLong("synced", 0), p.getLong("battTs", 0))
+            val synced = p.getLong("synced", 0)
             v.setTextViewText(R.id.w_name, p.getString("name", null) ?: "My Rings")
-            v.setTextViewText(R.id.w_when, if (newest == 0L) "Open the app to sync" else ago(now - newest))
+            v.setTextViewText(R.id.w_when, if (synced == 0L) "Open the app to sync" else "Synced ${ago(now - synced)}")
             v.setTextViewText(R.id.w_ready, if (ready >= 0) ready.toString() else "—")
             v.setTextViewText(R.id.w_sleep, if (sleep >= 0) sleep.toString() else "—")
             val h = p.getFloat("sleepH", 0f)

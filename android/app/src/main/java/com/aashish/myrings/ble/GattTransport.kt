@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Log
 import com.aashish.myrings.protocol.Gatt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -38,21 +39,39 @@ class GattTransport private constructor(
 
     private val writeMutex = Mutex()
 
+    /**
+     * Android runs one GATT operation at a time per link and refuses a new one while the last is still in
+     * flight (ERROR_GATT_WRITE_REQUEST_BUSY on 13+, plain `false` before). That happens after a slow MTU
+     * exchange or a write whose callback arrived late, so a busy refusal is retried briefly instead of failing
+     * the whole sync. Other refusals fail at once, with Android's reason in the message.
+     */
     override suspend fun write(data: ByteArray) = writeMutex.withLock {
         val d = CompletableDeferred<Int>()
         cb.writeDone = d
-        val ok = if (Build.VERSION.SDK_INT >= 33) {
-            gatt.writeCharacteristic(writeChar, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            run {
-                writeChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                writeChar.value = data
-                gatt.writeCharacteristic(writeChar)
+        var code = 0
+        for (attempt in 0 until WRITE_ATTEMPTS) {
+            if (cb.disconnected) throw BleException("the ring disconnected")
+            code = if (Build.VERSION.SDK_INT >= 33) {
+                gatt.writeCharacteristic(writeChar, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+            } else {
+                @Suppress("DEPRECATION")
+                run {
+                    writeChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    writeChar.value = data
+                    if (gatt.writeCharacteristic(writeChar)) BluetoothStatusCodes.SUCCESS else BUSY_LEGACY
+                }
             }
+            if (code == BluetoothStatusCodes.SUCCESS) break
+            Log.w(TAG, "write refused: ${writeRefusal(code)} (attempt ${attempt + 1}/$WRITE_ATTEMPTS)")
+            if (!isBusy(code)) break
+            delay(WRITE_RETRY_MS * (attempt + 1))
         }
-        if (!ok) throw BleException("write rejected by the Bluetooth stack")
+        if (code != BluetoothStatusCodes.SUCCESS) {
+            if (cb.disconnected) throw BleException("the ring disconnected")
+            throw BleException("Bluetooth refused the write: ${writeRefusal(code)}")
+        }
         val status = withTimeoutOrNull(8000) { d.await() } ?: throw BleException("write timed out")
+        if (status == -1) throw BleException("the ring disconnected")
         if (status != BluetoothGatt.GATT_SUCCESS) throw BleException("write failed (GATT status $status)")
     }
 
@@ -93,6 +112,27 @@ class GattTransport private constructor(
     }
 
     companion object {
+        private const val TAG = "GattTransport"
+        private const val WRITE_ATTEMPTS = 8
+        private const val WRITE_RETRY_MS = 120L // grows per attempt: about 4 s in total
+        private const val MTU_WAIT_MS = 6_000L
+        private const val BUSY_LEGACY = -201 // pre-13 writeCharacteristic only says false; treat it as busy
+
+        private fun isBusy(code: Int) = code == BUSY_LEGACY ||
+            (Build.VERSION.SDK_INT >= 33 && code == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY)
+
+        /** Android's reason for refusing a write, in words, with the raw code for the log. */
+        fun writeRefusal(code: Int): String = when {
+            code == BUSY_LEGACY -> "Bluetooth was busy with another operation"
+            Build.VERSION.SDK_INT < 33 -> "code $code"
+            code == BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY -> "Bluetooth was busy with another operation (code $code)"
+            code == BluetoothStatusCodes.ERROR_GATT_WRITE_NOT_ALLOWED -> "the ring does not allow this write (code $code)"
+            code == BluetoothStatusCodes.ERROR_MISSING_BLUETOOTH_CONNECT_PERMISSION -> "the app is missing Bluetooth permission (code $code)"
+            code == BluetoothStatusCodes.ERROR_PROFILE_SERVICE_NOT_BOUND -> "Android's Bluetooth service is not ready (code $code)"
+            code == BluetoothStatusCodes.ERROR_DEVICE_NOT_BONDED -> "the ring is not paired with this phone (code $code)"
+            else -> "code $code"
+        }
+
         private val adapter get() = BluetoothAdapter.getDefaultAdapter()
 
         fun bluetoothOn(): Boolean = adapter?.isEnabled == true
@@ -161,8 +201,8 @@ class GattTransport private constructor(
                 if (!gatt.discoverServices()) throw BleException("service discovery failed to start")
                 val ss = withTimeoutOrNull(15_000) { cb.services.await() } ?: throw BleException("service discovery timed out")
                 if (ss != 0) throw BleException("service discovery failed (status $ss)")
-                gatt.requestMtu(247)
-                withTimeoutOrNull(3_000) { cb.mtu.await() }
+                // Wait for the MTU exchange to finish: an operation started while it is still pending is refused as busy.
+                if (gatt.requestMtu(247)) withTimeoutOrNull(MTU_WAIT_MS) { cb.mtu.await() } ?: Log.w(TAG, "MTU exchange did not finish in ${MTU_WAIT_MS} ms")
 
                 val service = gatt.getService(Gatt.SERVICE) ?: throw BleException("Oura service not found on this device")
                 val write = service.getCharacteristic(Gatt.WRITE) ?: throw BleException("Oura write characteristic not found")
