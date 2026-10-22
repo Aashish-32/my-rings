@@ -102,6 +102,7 @@ class RingManager private constructor(private val app: Context) {
     private fun recordBattery(serial: String, name: String, pct: Int) {
         val prev = store.latestBattery(serial)?.pct
         store.addBattery(serial, pct)
+        runCatching { RingWidget.saveBattery(app, serial, name, pct) }
         runCatching { HealthNotifier.checkBattery(app, serial, name, pct, prev) }
     }
 
@@ -152,7 +153,12 @@ class RingManager private constructor(private val app: Context) {
             }
         }
         // with the ring released, look for a multi-day drift and tell the person once per episode
-        if (inserted > 0) runCatching { HealthNotifier.check(app, serial, row.name, Analytics.analyze(store, serial)) }
+        // refresh the home-screen widget on every sync, not only when there are new events (the numbers age with the clock)
+        runCatching {
+            val analysis = Analytics.analyze(store, serial)
+            RingWidget.saveNight(app, serial, row.name, analysis)
+            if (inserted > 0) HealthNotifier.check(app, serial, row.name, analysis)
+        }
         return inserted
     }
 
