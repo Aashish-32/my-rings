@@ -1,0 +1,19 @@
+name: OuraKit (iOS port)
+
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios-kit.yml']
+  pull_request:
+    paths: ['ios/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build and test OuraKit
+        working-directory: ios/OuraKit
+        run: swift test
