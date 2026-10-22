@@ -132,6 +132,7 @@ internal fun Kv(k: String, v: String, modifier: Modifier = Modifier) {
 internal fun RenameDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by remember { mutableStateOf(current) }
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
         onDismissRequest = onDismiss, title = { Text("Rename ring") },
         text = { OutlinedTextField(text, { text = it.take(40) }, singleLine = true) },
         confirmButton = { TextButton(onClick = { if (text.isNotBlank()) onSave(text) }) { Text("Save") } },
@@ -149,6 +150,7 @@ internal fun AddRingDialog(vm: AppViewModel, onClose: () -> Unit) {
     LaunchedEffect(state.done) { if (state.done) { delay(900); vm.resetPair(); onClose() } }
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
         onDismissRequest = { if (!state.running) { vm.resetPair(); onClose() } },
         title = { Text("Add a ring") },
         text = {
@@ -166,7 +168,7 @@ internal fun AddRingDialog(vm: AppViewModel, onClose: () -> Unit) {
                         Text(if (adopt) "Ring is already set up — I have its key" else "Ring was factory-reset (new key)", fontSize = 13.sp)
                     }
                     OutlinedTextField(
-                        key, { key = it.filter { c -> c.isLetterOrDigit() }.take(32) },
+                        key, { key = com.aashish.myrings.data.KeyBackup.extract(it) ?: it.filter { c -> c.isLetterOrDigit() }.take(32) },
                         label = { Text(if (adopt) "Auth key (32 hex characters)" else "Reuse an existing key (optional)") },
                         singleLine = true, modifier = Modifier.fillMaxWidth(),
                     )

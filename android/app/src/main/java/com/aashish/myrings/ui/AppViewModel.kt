@@ -7,6 +7,8 @@ import com.aashish.myrings.data.*
 import com.aashish.myrings.service.RingManager
 import com.aashish.myrings.service.RingUi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,6 +47,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _pair = MutableStateFlow(PairState())
     val pair: StateFlow<PairState> = _pair
 
+    /** Serial of a ring that was just paired and should be offered a key backup. */
+    private val _backupPrompt = MutableStateFlow<String?>(null)
+    val backupPrompt: StateFlow<String?> = _backupPrompt
+    fun dismissBackupPrompt() { _backupPrompt.value = null }
+
+    private val _calm = MutableStateFlow(CalmState())
+    val calm: StateFlow<CalmState> = _calm
+    private var calmJob: kotlinx.coroutines.Job? = null
+
+    private val _measure = MutableStateFlow(MeasureState())
+    val measure: StateFlow<MeasureState> = _measure
+    private var measureJob: kotlinx.coroutines.Job? = null
+
     private val _snack = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snack: SharedFlow<String> = _snack
 
@@ -75,6 +90,148 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun toast(message: String) { _snack.tryEmit(message) }
+
+    /** Live heart rate (and HRV) for up to 45 s on the selected ring. */
+    fun startMeasure() {
+        val serial = _selected.value ?: return
+        measureJob?.cancel()
+        val total = 45
+        _measure.value = MeasureState(open = true, running = true, stage = MeasureStage.CONNECTING, secondsLeft = total, totalSeconds = total)
+        measureJob = viewModelScope.launch(Dispatchers.IO) {
+            val started = System.currentTimeMillis()
+            var readyAt = 0L
+            val ibis = ArrayList<Int>()
+            val meter = com.aashish.myrings.data.MotionMeter()
+            val ticker = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(250)
+                    val s = _measure.value
+                    val left = (total - (System.currentTimeMillis() - started) / 1000).toInt().coerceAtLeast(0)
+                    // the wait gets honest progress: connected -> sensor waking -> looking for the pulse
+                    val stage = when {
+                        s.stage == MeasureStage.LOCKED -> MeasureStage.LOCKED
+                        readyAt == 0L -> MeasureStage.CONNECTING
+                        System.currentTimeMillis() - readyAt < 2500 -> MeasureStage.WAKING
+                        else -> MeasureStage.FINDING
+                    }
+                    _measure.value = s.copy(secondsLeft = left, stage = stage)
+                }
+            }
+            try {
+                mgr.measureNow(serial, total, onReady = { readyAt = System.currentTimeMillis() }, onMotion = { x, y, z ->
+                    meter.add(x, y, z)
+                    val lv = meter.level()
+                    if (lv != _measure.value.motion) _measure.value = _measure.value.copy(motion = lv)
+                }) { beat ->
+                    // beats taken while the hand is moving are unreliable (the light sensor shakes): show them as discarded, don't average them in
+                    if (meter.level() == com.aashish.myrings.data.MotionLevel.MOVING) {
+                        _measure.value = _measure.value.copy(discarded = _measure.value.discarded + 1)
+                        return@measureNow
+                    }
+                    val beats = (_measure.value.beats + beat.bpm).takeLast(60)
+                    val last3 = beats.takeLast(3).sorted()
+                    val smooth = last3[last3.size / 2] // median of the last few beats steadies the number
+                    ibis += beat.ibiMs
+                    _measure.value = _measure.value.copy(
+                        stage = MeasureStage.LOCKED, bpm = smooth, beats = beats,
+                        beatCount = _measure.value.beatCount + 1, hrv = liveRmssd(ibis),
+                    )
+                }
+                val b = _measure.value.beats
+                _measure.value = _measure.value.copy(
+                    running = false,
+                    message = if (b.size >= 5) "Average ${b.average().toInt()} bpm over ${b.size} beats" else "Not enough beats. Wear the ring snugly on your finger and hold still, then try again.",
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _measure.value = _measure.value.copy(running = false, message = "Stopped")
+                throw e
+            } catch (e: Exception) {
+                _measure.value = _measure.value.copy(running = false, message = mgr.friendly(e))
+            } finally { ticker.cancel() }
+        }
+    }
+
+    /** RMSSD of the recent beat-to-beat intervals (ms), skipping jumps over 25 % that are usually missed or doubled beats. Needs 8 beats. */
+    private fun liveRmssd(ibis: List<Int>): Int? {
+        val r = ibis.takeLast(30)
+        val diffs = r.zipWithNext().filter { (a, b) -> kotlin.math.abs(b - a) <= 0.25 * a }.map { (a, b) -> (b - a).toDouble() }
+        if (r.size < 8 || diffs.size < 6) return null
+        return kotlin.math.sqrt(diffs.sumOf { it * it } / diffs.size).roundToInt()
+    }
+
+    /** A guided one-minute slow-breathing session read through the live heart-rate stream (see [com.aashish.myrings.data.CalmSession]). */
+    fun startCalm() {
+        val serial = _selected.value ?: return
+        calmJob?.cancel()
+        _calm.value = CalmState(open = true, running = true)
+        calmJob = viewModelScope.launch(Dispatchers.IO) {
+            val beats = ArrayList<com.aashish.myrings.data.CalmBeat>()
+            val recentIbis = ArrayList<Int>()
+            val meter = com.aashish.myrings.data.MotionMeter()
+            val started = System.currentTimeMillis()
+            var readyAt = 0L
+            var lockAt = 0L
+            var finished = false
+            val live = launch {
+                try {
+                    mgr.measureNow(serial, 90, onReady = { readyAt = System.currentTimeMillis() }, onMotion = { x, y, z ->
+                        meter.add(x, y, z)
+                        val lv = meter.level()
+                        if (lv != _calm.value.motion) _calm.value = _calm.value.copy(motion = lv)
+                    }) { beat ->
+                        if (meter.level() == com.aashish.myrings.data.MotionLevel.MOVING) return@measureNow // a moving hand spoils the beat
+                        val now = System.currentTimeMillis()
+                        if (lockAt == 0L) { lockAt = now; _calm.value = _calm.value.copy(lockedAtMs = now, stage = MeasureStage.LOCKED) }
+                        beats += com.aashish.myrings.data.CalmBeat(now - lockAt, beat.ibiMs)
+                        recentIbis += beat.ibiMs
+                        val window = recentIbis.takeLast(20)
+                        val hrv = com.aashish.myrings.data.CalmSession.rmssd(window)?.roundToInt()
+                        val last3 = window.takeLast(3).map { 60000 / it }.sorted()
+                        _calm.value = _calm.value.copy(
+                            bpm = last3[last3.size / 2], hrv = hrv ?: _calm.value.hrv,
+                            hrvTrend = if (hrv != null) (_calm.value.hrvTrend + hrv).takeLast(40) else _calm.value.hrvTrend,
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!finished) { finished = true; _calm.value = _calm.value.copy(running = false, message = mgr.friendly(e)) }
+                }
+            }
+            while (live.isActive) {
+                kotlinx.coroutines.delay(250)
+                val now = System.currentTimeMillis()
+                if (lockAt == 0L) {
+                    val stage = when {
+                        readyAt == 0L -> MeasureStage.CONNECTING
+                        now - readyAt < 2500 -> MeasureStage.WAKING
+                        else -> MeasureStage.FINDING
+                    }
+                    _calm.value = _calm.value.copy(stage = stage)
+                    if (now - started > 45_000) { // no pulse found
+                        finished = true
+                        _calm.value = _calm.value.copy(running = false, message = "Couldn't find your pulse. Wear the ring snugly on your finger and try again.")
+                        live.cancelAndJoin(); break
+                    }
+                } else {
+                    val left = (com.aashish.myrings.data.CalmSession.SESSION_S - (now - lockAt) / 1000).toInt().coerceAtLeast(0)
+                    _calm.value = _calm.value.copy(secondsLeft = left)
+                    if (left <= 0) {
+                        finished = true
+                        _calm.value = _calm.value.copy(running = false, result = com.aashish.myrings.data.CalmSession.summarize(beats))
+                        live.cancelAndJoin(); break
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopCalm() { calmJob?.cancel(); _calm.value = _calm.value.copy(running = false, message = "Stopped") }
+    fun closeCalm() { calmJob?.cancel(); _calm.value = CalmState() }
+
+    fun stopMeasure() { measureJob?.cancel() }
+    fun closeMeasure() { measureJob?.cancel(); _measure.value = MeasureState() }
     fun select(serial: String) { _selected.value = serial }
     fun setFilter(f: String) { _filter.value = f }
     fun setDev(v: Boolean) { prefs.edit().putBoolean("dev", v).apply(); _dev.value = v }
@@ -134,6 +291,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val serial = if (adoptExisting) mgr.adopt(name, keyHex ?: "", onStatus) else mgr.pair(name, keyHex, onStatus)
                 _selected.value = serial
                 _pair.value = PairState(done = true, status = "Ring added")
+                if (!adoptExisting) _backupPrompt.value = serial // a fresh key exists only on this phone: offer a copy
                 // first sync right away: it sets the ring's clock and timezone, which dates everything it records
                 mgr.scope.launch { mgr.lifecycleSync("after pairing") }
             } catch (e: Exception) {

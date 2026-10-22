@@ -23,6 +23,9 @@ object Feature {
 object FeatureMode {
     const val OFF = 0x00
     const val AUTOMATIC = 0x01
+    const val REQUESTED = 0x02
+    /** Streams live while connected (the on-screen "current heart rate"). */
+    const val CONNECTED_LIVE = 0x03
 }
 
 class Packet(val tag: Int, val payload: ByteArray) {
@@ -99,6 +102,12 @@ object Req {
     fun dataFlush() = bytes(0x28, 0x01, 0x00)
     fun featureStatus(feature: Int) = bytes(0x2f, 0x02, 0x20, feature)
     fun setFeatureMode(feature: Int, mode: Int) = bytes(0x2f, 0x03, 0x22, feature, mode)
+    /** SetFeatureSubscription (ext 0x26): subscribe to a feature's data. Mode 2 = latest value pushes, 0 = off. */
+    fun setFeatureSubscription(capability: Int, mode: Int) = bytes(0x2f, 0x03, 0x26, capability, mode)
+    /** Start a time-boxed real-time stream (ext 0x06): a u32 type mask, a u16 length in minutes, a u8 delay. ACM (0x20) is the accelerometer. */
+    fun setRealtime(mask: Long, minutes: Int, delay: Int = 0) = Packet(0x06, u32(mask) + u16(minutes) + byteArrayOf(delay.toByte())).encode()
+    fun realtimeOff() = bytes(0x06, 0x04, 0, 0, 0, 0)
+    fun setNotification(flags: Int) = bytes(0x1c, 0x01, flags)
     fun checkSleepAnalysis(force: Boolean) = bytes(0x28, 0x01, if (force) 1 else 0)
 }
 

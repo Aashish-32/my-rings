@@ -56,6 +56,8 @@ data class Night(
     val stagesSource: String? = null,
     /** One stage per 30 s from the start of the night, for the hypnogram chart. */
     val hypnogram: List<String>? = null,
+    /** Oura's sleep debt over the last two weeks, in hours (null until 5 nights exist). */
+    val sleepDebtH: Double? = null,
 )
 
 data class StressDay(
@@ -87,6 +89,10 @@ data class Analysis(
     /** Firmware log lines (debug_event + debug_data text), oldest first. */
     val logs: List<Pair<Long, String>> = emptyList(),
     val profile: UsedProfile? = null,
+    /** Activity sessions found per date (effort, duration, heart rate, calories). */
+    val workouts: Map<String, List<Workout>> = emptyMap(),
+    /** Estimated Activity score per date. */
+    val activity: Map<String, Score> = emptyMap(),
 )
 
 /**
@@ -180,6 +186,7 @@ object Analytics {
         val phases = ArrayList<Triple<Long, String, List<String>>>()
         val met = TreeMap<Long, Double>() // minute -> MET
         val motion = TreeMap<Long, Int>() // t -> motion seconds in that ~30 s window
+        val restless = ArrayList<Triple<Long, Int, Int>>() // motion_period: (t, readings at level 2-3, readings)
         val breath = ArrayList<Pair<Long, Double>>()
         val bedtimes = ArrayList<Pair<Long, Long>>()
         val alerts = ArrayList<Long>()
@@ -248,6 +255,7 @@ object Analytics {
                     mets.forEachIndexed { i, v -> met[(t - (mets.size - 1 - i) * 60L) / 60 * 60] = v }
                 }
                 0x47 -> (m["motion_seconds"] as? Number)?.let { motion[t] = it.toInt() }
+                0x6b -> (m["motion_levels"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }?.takeIf { it.isNotEmpty() }?.let { lv -> restless += Triple(t, lv.count { it >= 2 }, lv.size) }
                 0x6a -> (m["breath"] as? Number)?.toDouble()?.takeIf { it in 5.0..40.0 }?.let { breath += t to it }
                 0x76 -> {
                     val s = (m["bedtime_start_ds"] as Number).toLong(); val e = (m["bedtime_end_ds"] as Number).toLong()
@@ -343,14 +351,18 @@ object Analytics {
             val ox = spo2Pct.filter { it.first in s until e }.map { it.second }
                 .ifEmpty { spo2R.filter { it.first in s until e }.map { spo2FromR(it.second) } }
             val mid = Instant.ofEpochSecond((s + e) / 2).atZone(zone).toLocalTime()
+            // Oura's nightly temperature: smallest of the calm 30-sample window maxima (ignores warm-up and edge spikes); plain mean as fallback
+            val nightTemp = NightlyTemperature.compute(temps.filter { it.first in s until e && it.second >= WORN_TEMP_C }.map { it.second }) ?: mean(nightTemps)
+            val rs = restless.filter { it.first in s until e }
+            val restlessFrac = if (rs.sumOf { it.third } >= 20) rs.sumOf { it.second }.toDouble() / rs.sumOf { it.third } else null
             RawNight(
                 w, dateOf(e),
                 Scores.SleepInput(total, inBed, latency, waso, stages?.get("rem") ?: stages?.let { 0.0 }, stages?.get("deep") ?: stages?.let { 0.0 },
-                    mid.hour + mid.minute / 60.0, stagesEstimated = stagesSource == "estimated"),
+                    mid.hour + mid.minute / 60.0, stagesEstimated = stagesSource == "estimated", restlessFraction = restlessFrac),
                 stages, iMin?.let { smooth[it] }, mean(hrSeries.map { it.second }),
                 mean(rmssd) ?: median(rmssdBuckets.within(s, e).values.toList()),
                 iMin?.let { (e - hrSeries[it].first) / 3600.0 },
-                mean(nightTemps), mean(ox), mean(breath.filter { it.first in s until e }.map { it.second }),
+                nightTemp, mean(ox), mean(breath.filter { it.first in s until e }.map { it.second }),
                 stagesSource, hyp.takeIf { it.size >= 20 },
             )
         }
@@ -358,14 +370,19 @@ object Analytics {
         val nights = raw.mapIndexed { i, n ->
             val prior = raw.subList(maxOf(0, i - Scores.BASELINE_NIGHTS), i)
             val sleepScore = Scores.sleepScore(n.sleep.copy(ageYears = age))
-            val tempBase = prior.mapNotNull { it.temp }.takeIf { it.size >= 3 }?.average()
+            // baselines use the ring's own annealing moving average (usable in the first days), not a plain mean
+            val tempBase = EmaBaseline.of(prior.map { it.temp }, scale = 100.0, minSamples = 3)
             val tempDev = if (n.temp != null && tempBase != null) n.temp - tempBase else null
             val recent = raw.subList(maxOf(0, i - 2), i + 1).mapNotNull { it.hrv }
-            val hrvBase = raw.subList(maxOf(0, i - 16), maxOf(0, i - 2)).mapNotNull { it.hrv }.takeIf { it.size >= 2 }?.average()
+            val hrvBase = EmaBaseline.of(raw.subList(0, maxOf(0, i - 2)).map { it.hrv }, minSamples = 2)
             val date = LocalDate.parse(n.date)
             val actDays = (1..14).mapNotNull { activeMinutes(date.minusDays(it.toLong()).toString()) }
+            val needS = (Metabolic.sleepNeedHours(age) * 3600).toInt()
+            val lastNights = raw.subList(maxOf(0, i - 13), i + 1).reversed() // newest first, as ecore expects
+            val debt = SleepDebt.compute(lastNights.map { (it.sleep.totalSleepMin * 60).toInt() }, lastNights.map { needS })
+            val debtH = debt.takeIf { it.valid }?.debtHours
             val readiness = Scores.readiness(Scores.ReadinessInput(
-                lowestHr = n.lowest, rhrBaseline = prior.mapNotNull { it.lowest }.takeIf { it.size >= 2 }?.average(),
+                lowestHr = n.lowest, rhrBaseline = EmaBaseline.of(prior.map { it.lowest }, minSamples = 2),
                 sleepScore = sleepScore.value,
                 hrvRecent = mean(recent), hrvBaseline = hrvBase,
                 tempDeviation = tempDev,
@@ -375,12 +392,13 @@ object Analytics {
                 activityBalanceMin = actDays.takeIf { it.size >= 2 }?.average(),
                 nightsOfHistory = i,
                 sleepNeedH = Metabolic.sleepNeedHours(age),
+                sleepDebtH = debtH,
             ))
             Night(
                 n.date, n.w[0], n.w[1], r(n.sleep.inBedMin, 0)!!, r(n.sleep.totalSleepMin, 0)!!,
                 r(if (n.sleep.inBedMin > 0) 100 * n.sleep.totalSleepMin / n.sleep.inBedMin else 0.0, 0)!!, r(n.sleep.latencyMin, 0),
                 n.stages, r(n.lowest, 0), r(n.avg, 0), r(n.hrv, 0), r(n.recovery), r(n.temp, 2), r(tempDev, 2), r(n.spo2), r(n.breath),
-                sleepScore, readiness, n.stagesSource, n.hyp,
+                sleepScore, readiness, n.stagesSource, n.hyp, sleepDebtH = debtH?.let { Math.round(it * 10) / 10.0 },
             )
         }
 
@@ -448,9 +466,19 @@ object Analytics {
             )
         }
 
+        // ---- activity sessions and the estimated Activity score ----
+        val workouts = intraday.mapValues { (_, d) -> Workouts.detect(d.met, d.hr, weight) }.filterValues { it.isNotEmpty() }
+        val activity = HashMap<String, Score>()
+        for (d in days) {
+            val intra = intraday[d.date] ?: continue
+            if (intra.met.size < 120) continue
+            val week = (0..6).flatMap { workouts[LocalDate.parse(d.date).minusDays(it.toLong()).toString()].orEmpty() }
+            activity[d.date] = ActivityScore.score(intra.met, d.activeKcal, ActivityScore.defaultTargetKcal(bmr), d.inactiveMin, week)
+        }
+
         val sortedBattery = battery.sortedBy { it.ts }
         val drain = batteryDrain(sortedBattery)
-        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs, used)
+        return Analysis(days, sortedBattery, reboots, warnings(reboots, negT, drain, bleTimes), drain, nights, stress, intraday, logs, used, workouts = workouts, activity = activity)
     }
 
     private fun warnings(reboots: List<Reboot>, negT: Int, drain: Double?, bleTimes: List<Long>): List<HealthWarning> {

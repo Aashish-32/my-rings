@@ -30,7 +30,27 @@ class RingManager private constructor(private val app: Context) {
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages
 
-    init { reload() }
+    init {
+        reload()
+        scope.launch { runCatching { redecodeIfNeeded() } }
+    }
+
+    /** Brings the stored JSON in line with the current decoders (bounded batches, resumable if the app is closed midway). */
+    private suspend fun redecodeIfNeeded() {
+        val target = Events.DECODER_VERSION
+        if ((store.meta("decoder_version")?.toIntOrNull() ?: 0) >= target) return
+        var last = store.meta("redecode_last_id")?.toLongOrNull() ?: 0L
+        var changedTotal = 0
+        while (true) {
+            val (lastId, changed) = store.redecodeBatch(last, 500) { tag, body -> Events.decode(tag, body)?.let { toJson(it) } } ?: break
+            last = lastId; changedTotal += changed
+            store.setMeta("redecode_last_id", last.toString())
+            kotlinx.coroutines.yield()
+        }
+        store.setMeta("decoder_version", target.toString())
+        store.setMeta("redecode_last_id", "0")
+        if (changedTotal > 0) logLine("re-decoded stored events with the latest decoders ($changedTotal updated)")
+    }
 
     fun reload() {
         _rings.value = store.rings().map { RingUi(it, store.latestBattery(it.serial), store.tracking(it.serial)) }
@@ -79,6 +99,12 @@ class RingManager private constructor(private val app: Context) {
     }
 
     // ---- battery ----
+    private fun recordBattery(serial: String, name: String, pct: Int) {
+        val prev = store.latestBattery(serial)?.pct
+        store.addBattery(serial, pct)
+        runCatching { HealthNotifier.checkBattery(app, serial, name, pct, prev) }
+    }
+
     /** Quick battery read. Returns true on success, false on failure, null if Bluetooth was busy (nothing attempted). */
     suspend fun refreshBattery(serial: String): Boolean? {
         val row = store.rings().firstOrNull { it.serial == serial } ?: return false
@@ -86,7 +112,7 @@ class RingManager private constructor(private val app: Context) {
             try {
                 withRing(row, "Reading battery") { c ->
                     val b = c.battery()
-                    store.addBattery(serial, b.percent)
+                    recordBattery(serial, row.name, b.percent)
                 }
                 reload(); true
             } catch (e: Exception) { logLine("battery ${row.name}: ${friendly(e)}"); false }
@@ -103,7 +129,7 @@ class RingManager private constructor(private val app: Context) {
     /** Caller must hold [bleLock]. */
     private suspend fun syncLocked(row: RingRow): Int {
         val serial = row.serial
-        return run {
+        val inserted = run {
             withRing(row, "Syncing") { c ->
                 try { c.setupAppStream() } catch (e: Exception) { logLine("stream setup: ${e.message}") }
                 try { c.syncTimeApp() } catch (e: Exception) { runCatching { c.syncTimeLegacy() } }
@@ -119,12 +145,15 @@ class RingManager private constructor(private val app: Context) {
                     true
                 }
                 store.touchSync(serial)
-                runCatching { store.addBattery(serial, c.battery().percent) }
+                runCatching { recordBattery(serial, row.name, c.battery().percent) }
                 logLine("sync ${row.name}: $total events ($inserted new), cursor $cursor")
                 reload()
                 inserted
             }
         }
+        // with the ring released, look for a multi-day drift and tell the person once per episode
+        if (inserted > 0) runCatching { HealthNotifier.check(app, serial, row.name, Analytics.analyze(store, serial)) }
+        return inserted
     }
 
     /** Ask the ring which measurements are on, and remember the answer. Caller must be connected and authenticated. */
@@ -158,6 +187,19 @@ class RingManager private constructor(private val app: Context) {
         val result = exclusive(wait = true) { withRing(row, "Checking tracking") { c -> readTracking(c, serial) } }
         reload()
         return result
+    }
+
+    // ---- live heart rate ----
+    /** Streams live heart rate for [seconds]; [onBeat] gets each valid beat. Holds Bluetooth for the duration. */
+    suspend fun measureNow(serial: String, seconds: Int, onReady: () -> Unit = {}, onMotion: (Int, Int, Int) -> Unit = { _, _, _ -> }, onBeat: (LiveBeat) -> Unit) {
+        var logged = 0
+        val row = store.rings().first { it.serial == serial }
+        exclusive(wait = true) {
+            withRing(row, "Measuring heart rate") { c ->
+                onReady()
+                c.liveHeartRate(seconds * 1000L, onBeat, { f -> if (logged++ < 12) logLine("live HR frame: ${f.toHex()}") }, onMotion)
+            }
+        }
     }
 
     // ---- pairing ----
@@ -232,7 +274,11 @@ class RingManager private constructor(private val app: Context) {
      * keeps a live connection and syncs whenever the ring reconnects; we don't hold a connection (it costs ring
      * battery), so this periodic sync stands in for that, keeping scores fresh even if the app is never opened.
      */
-    suspend fun backgroundPass(batteryEveryMs: Long = BATTERY_EVERY_MS, safetySyncEveryMs: Long = SAFETY_SYNC_EVERY_MS) {
+    suspend fun backgroundPass(
+        batteryEveryMs: Long = BATTERY_EVERY_MS,
+        // with heads-ups on, check a little more often so a heart rate that has not settled is noticed the same day
+        safetySyncEveryMs: Long = if (HealthNotifier.enabled(app)) minOf(SAFETY_SYNC_EVERY_MS, HEADSUP_SYNC_EVERY_MS) else SAFETY_SYNC_EVERY_MS,
+    ) {
         val now = System.currentTimeMillis()
         for (ui in store.rings()) {
             val serial = ui.serial
@@ -287,6 +333,7 @@ class RingManager private constructor(private val app: Context) {
     companion object {
         const val BATTERY_EVERY_MS = 30 * 60_000L
         const val SAFETY_SYNC_EVERY_MS = 3 * 60 * 60_000L
+        const val HEADSUP_SYNC_EVERY_MS = 2 * 60 * 60_000L
         const val MIN_GAP_BETWEEN_SYNCS_MS = 30_000L
         @Volatile private var inst: RingManager? = null
         fun get(ctx: Context): RingManager = inst ?: synchronized(this) { inst ?: RingManager(ctx.applicationContext).also { inst = it } }

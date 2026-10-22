@@ -86,6 +86,8 @@ fun TimeChart(
     bands: List<Pair<Long, Long>> = emptyList(), bandLabel: String = "Asleep",
     /** Another day's points, already shifted onto this day's clock; shown only when the user turns the chip on. */
     compare: List<Pair<Long, Double>> = emptyList(), compareLabel: String = "Yesterday",
+    /** Time ranges to mark as activity (workouts). */
+    highlights: List<Pair<Long, Long>> = emptyList(), highlightLabel: String = "Workout",
 ) {
     val a = MaterialTheme.aura
     Panel(Modifier.fillMaxWidth()) {
@@ -151,6 +153,13 @@ fun TimeChart(
                 }
             }
 
+            highlights.forEach { (hs, he) ->
+                val sx = x(hs.coerceIn(t0, t1)); val ex = x(he.coerceIn(t0, t1))
+                if (ex > sx) {
+                    drawRect(Palette.Ember.copy(alpha = 0.14f), Offset(sx, top), Size(ex - sx, plotH))
+                    drawText(tm, highlightLabel, Offset(sx + 4.dp.toPx(), top + plotH - 14.dp.toPx()), TextStyle(fontSize = 9.5.sp, color = Palette.Ember))
+                }
+            }
             // gridlines with value labels
             for (f in listOf(0f, 0.5f, 1f)) {
                 val gy = top + plotH * f

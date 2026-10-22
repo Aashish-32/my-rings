@@ -71,6 +71,8 @@ object Scores {
         val stagesEstimated: Boolean = false,
         /** Wearer's age: shifts the total-sleep target ([Metabolic.sleepNeedHours]) and the deep-sleep target. */
         val ageYears: Int? = null,
+        /** Share of the night's movement readings that were restless (level 2 or 3), from the ring's motion_period events. */
+        val restlessFraction: Double? = null,
     )
 
     fun sleepScore(s: SleepInput): Score {
@@ -82,8 +84,9 @@ object Scores {
         return combine(listOf(
             c("Total sleep", 35, s.totalSleepMin / 60 - shift, listOf(0.0 to 0.0, 4.0 to 20.0, 5.0 to 40.0, 6.0 to 65.0, 7.0 to 85.0, 7.5 to 95.0, 8.0 to 100.0, 10.0 to 100.0, 11.5 to 85.0),
                 "%.1f h asleep (about %.1f h suits your age)".format(s.totalSleepMin / 60, 8.0 + shift)),
-            c("Restfulness", 15, s.wasoFraction, listOf(0.0 to 100.0, 0.05 to 95.0, 0.1 to 80.0, 0.2 to 55.0, 0.35 to 20.0, 0.5 to 0.0),
-                "${(s.wasoFraction * 100).roundToInt()}% of the night awake or restless"),
+            // Oura drives this from restless periods and wake-ups; time awake is our main input, with restless movement counted half as heavily
+            c("Restfulness", 15, s.wasoFraction + 0.5 * (s.restlessFraction ?: 0.0), listOf(0.0 to 100.0, 0.05 to 95.0, 0.1 to 80.0, 0.2 to 55.0, 0.35 to 20.0, 0.5 to 0.0),
+                "${(s.wasoFraction * 100).roundToInt()}% awake" + (s.restlessFraction?.let { ", ${(it * 100).roundToInt()}% restless movement" } ?: "")),
             c("Efficiency", 10, eff, listOf(50.0 to 0.0, 65.0 to 30.0, 75.0 to 60.0, 85.0 to 90.0, 90.0 to 100.0),
                 eff?.let { "${it.roundToInt()}% of time in bed asleep" } ?: "—"),
             c("REM sleep", 10, s.remMin, listOf(0.0 to 0.0, 30.0 to 35.0, 60.0 to 65.0, 90.0 to 90.0, 105.0 to 100.0),
@@ -119,6 +122,8 @@ object Scores {
         val nightsOfHistory: Int,
         /** Hours of sleep this person needs ([Metabolic.sleepNeedHours]); the sleep-balance curve is written for 8. */
         val sleepNeedH: Double = 8.0,
+        /** Oura's sleep-debt measure over the last two weeks (hours), when there are enough nights. */
+        val sleepDebtH: Double? = null,
     )
 
     fun readiness(r: ReadinessInput): Score {
@@ -138,7 +143,8 @@ object Scores {
                 else "%.0f ms recently vs %.0f ms baseline".format(r.hrvRecent, r.hrvBaseline)),
             c("Body temperature", 13, r.tempDeviation?.let { abs(it) }, listOf(0.0 to 100.0, 0.2 to 100.0, 0.4 to 85.0, 0.6 to 65.0, 1.0 to 35.0, 1.5 to 10.0),
                 r.tempDeviation?.let { "%+.2f °C from your normal".format(it) } ?: "Needs a few nights to learn your normal"),
-            c("Sleep balance", 12, r.sleepBalanceH?.let { it - (r.sleepNeedH - 8.0) }, listOf(5.0 to 20.0, 6.0 to 50.0, 6.5 to 70.0, 7.0 to 85.0, 7.5 to 100.0),
+            if (r.sleepDebtH != null) c("Sleep balance", 12, r.sleepDebtH, SleepDebt.BALANCE_CURVE, "Sleep debt %.1f h over the last two weeks".format(r.sleepDebtH))
+            else c("Sleep balance", 12, r.sleepBalanceH?.let { it - (r.sleepNeedH - 8.0) }, listOf(5.0 to 20.0, 6.0 to 50.0, 6.5 to 70.0, 7.0 to 85.0, 7.5 to 100.0),
                 r.sleepBalanceH?.let { "%.1f h a night lately".format(it) } ?: "—"),
             c("Previous day activity", 10, r.prevDayActiveMin, listOf(0.0 to 40.0, 15.0 to 70.0, 30.0 to 90.0, 45.0 to 100.0, 120.0 to 100.0, 180.0 to 85.0, 300.0 to 60.0),
                 r.prevDayActiveMin?.let { "${it.roundToInt()} active minutes yesterday" } ?: "No activity data for yesterday"),
@@ -147,7 +153,7 @@ object Scores {
             c("Activity balance", 7, r.activityBalanceMin, listOf(0.0 to 40.0, 10.0 to 65.0, 20.0 to 85.0, 30.0 to 100.0, 90.0 to 100.0, 150.0 to 85.0),
                 r.activityBalanceMin?.let { "${it.roundToInt()} active min/day over 2 weeks" } ?: "Needs a few days of activity"),
         ), provisional = r.nightsOfHistory < BASELINE_NIGHTS,
-            note = if (r.nightsOfHistory < BASELINE_NIGHTS) "Learning your baselines: ${r.nightsOfHistory} of $BASELINE_NIGHTS nights so far." else null)
+            note = if (r.nightsOfHistory < BASELINE_NIGHTS) "Learning your baselines: night ${r.nightsOfHistory + 1} of $BASELINE_NIGHTS. Scores firm up as earlier nights give them something to compare against." else null)
     }
 
     // ---------------- daytime stress ----------------

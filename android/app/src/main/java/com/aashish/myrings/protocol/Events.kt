@@ -27,6 +27,12 @@ internal fun u32le(b: ByteArray, i: Int): Long =
     (u8(b, i).toLong()) or (u8(b, i + 1).toLong() shl 8) or (u8(b, i + 2).toLong() shl 16) or (u8(b, i + 3).toLong() shl 24)
 
 object Events {
+    /**
+     * Bump whenever a decoder is added or changed. On the next launch the app re-decodes the raw bytes already stored,
+     * so the stored JSON (Developer view, exports) never lags behind. The analysis itself always decodes from the raw bytes.
+     */
+    const val DECODER_VERSION = 2
+
     fun name(tag: Int): String = NAMES[tag] ?: "unknown"
 
     fun decode(tag: Int, body: ByteArray): Map<String, Any?>? = try {
@@ -49,6 +55,10 @@ object Events {
             0x50 -> activityInfo(body)
             0x47 -> motion(body)
             0x6c -> featureSession(body)
+            0x49 -> sleepSummary1(body)
+            0x4c -> sleepSummary2(body)
+            0x4f -> sleepSummary3(body)
+            0x58 -> sleepSummary4(body)
             0x5b -> telemetry(body, "ble_connection_ind")
             0x79 -> telemetry(body, "self_test_data")
             0x82 -> telemetry(body, "scan_start")
@@ -236,6 +246,27 @@ object Events {
         if (b.size >= 6) { if (u8(b, 5) and 0x40 != 0) return null; m["high_intensity"] = u8(b, 5) and 0x3f }
         return m
     }
+
+    // The ring's own sleep summaries. Layouts come from the firmware parser but have not been checked against a real night
+    // (open_oura marks them "unvalidated"), so they are surfaced raw and carry that flag; nothing scores from them yet.
+    private fun sleepSummary1(b: ByteArray): Map<String, Any?>? =
+        if (b.size < 4) null else mapOf("start_offset_min" to u16le(b, 0), "end_offset_min" to u16le(b, 2), "_status" to "unvalidated")
+
+    private fun sleepSummary2(b: ByteArray): Map<String, Any?>? {
+        if (b.size != 14) return null
+        var a = 0L
+        for (i in 7 downTo 0) a = (a shl 8) or u8(b, i).toLong()
+        return mapOf("field_a_u64" to java.lang.Long.toUnsignedString(a), "field_b_u16" to u16le(b, 8), "field_c_u32" to u32le(b, 10), "_status" to "unvalidated")
+    }
+
+    private fun sleepSummary3(b: ByteArray): Map<String, Any?>? =
+        if (b.size != 11) null else mapOf(
+            "field_a" to (u8(b, 0) shr 3), "field_b" to (u8(b, 1) shr 3), "field_c" to ((u16le(b, 2) shr 3) and 0xff),
+            "field_d_u32" to u32le(b, 4), "field_e_u16" to u16le(b, 8), "field_f_u8" to u8(b, 10), "_status" to "unvalidated",
+        )
+
+    private fun sleepSummary4(b: ByteArray): Map<String, Any?>? =
+        if (b.size != 7) null else mapOf("field_a_u32" to u32le(b, 0), "field_b_u16" to u16le(b, 4), "field_c_u8" to u8(b, 6), "_status" to "unvalidated")
 
     /** feature_session (0x6c): [feature_id][session_status][optional u16 value]. */
     private fun featureSession(b: ByteArray): Map<String, Any?>? {

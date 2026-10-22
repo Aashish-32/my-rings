@@ -82,6 +82,16 @@ fun MyRingsApp(vm: AppViewModel) {
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
     }
     if (showAdd) AddRingDialog(vm) { showAdd = false }
+
+    val measure by vm.measure.collectAsState()
+    MeasureDialog(measure, onStop = vm::stopMeasure, onClose = vm::closeMeasure, onAgain = vm::startMeasure)
+    val calm by vm.calm.collectAsState()
+    CalmDialog(calm, onStop = vm::stopCalm, onClose = vm::closeCalm, onAgain = vm::startCalm)
+
+    val backupSerial by vm.backupPrompt.collectAsState()
+    rings.firstOrNull { it.row.serial == backupSerial }?.let { r ->
+        KeyBackupDialog(r, fresh = true, onClose = vm::dismissBackupPrompt, onMessage = vm::toast)
+    }
 }
 
 /** A soft pool of light behind everything: indigo at the top-left, a warm trace at the bottom-right. */
@@ -222,8 +232,8 @@ private fun NavArrow(glyph: Glyph, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-private fun headline(v: Int?): String = when {
-    v == null -> "Waiting for your first night"
+private fun headline(v: Int?, anyNight: Boolean = false): String = when {
+    v == null -> if (anyNight) "No sleep recorded" else "Waiting for your first night"
     v >= 85 -> "Primed to go"
     v >= 70 -> "Good to go"
     v >= 60 -> "Take it steady"
@@ -237,6 +247,7 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
     val detail by vm.detail.collectAsState()
     val d = detail
     if (d == null) { LoadingSkeleton(); return }
+    val busy by vm.busy.collectAsState()
     val series = d.analysis.days
     val a = MaterialTheme.aura
     var week by rememberSaveable { mutableStateOf(false) }
@@ -247,7 +258,8 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
             return@LazyColumn
         }
         val dates = series.map { it.date }
-        val day = selDay?.takeIf { it in dates } ?: dates.last()
+        // open on the latest day that has a night: today is empty until you wear the ring to bed
+        val day = selDay?.takeIf { it in dates } ?: dates.lastOrNull { dt -> d.analysis.nights.any { it.date == dt } } ?: dates.last()
         val night = d.analysis.nights.lastOrNull { it.date == day }
         val stress = d.analysis.stress[day]
         val calm = when (stress?.summary) { "Restored" -> 90; "Normal" -> 70; "Stressful" -> 45; else -> null }
@@ -273,7 +285,7 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
                     }
                 }
                 Spacer(Modifier.height(18.dp))
-                Text(headline(rd), style = AuraType.Display.copy(fontSize = 28.sp), textAlign = TextAlign.Center)
+                Text(headline(rd, d.analysis.nights.isNotEmpty()), style = AuraType.Display.copy(fontSize = 28.sp), textAlign = TextAlign.Center)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     night?.readiness?.note ?: night?.readiness?.label ?: "Wear your ring to bed and open the app in the morning.",
@@ -288,6 +300,12 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
                 ScoreKey("Calm", calm, CalmRing.from, stress?.summary ?: "—") { openSleep() }
             }
         }
+        item {
+            Column(Modifier.fillMaxWidth().fadeUp(3), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AuraButton("Measure heart rate now", Glyph.Heart, filled = false, enabled = busy == null) { vm.startMeasure() }
+                AuraButton("Calm session · 1 minute", Glyph.Wave, filled = false, enabled = busy == null) { vm.startCalm() }
+            }
+        }
         item { VitalsPanel(series, Modifier.fadeUp(3)) }
 
         val last = series.reversed()
@@ -299,7 +317,7 @@ private fun TodayScreen(vm: AppViewModel, ring: RingUi, selDay: String?, onDay: 
             else null
         }
         // a metric that has drifted from the person's own normal for several days gets a calm heads-up
-        val drift = com.aashish.myrings.data.Drift.notes(series.map { it.restingHr }, series.map { it.temp })
+        val drift = com.aashish.myrings.data.Drift.findings(d.analysis, System.currentTimeMillis() / 1000).map { it.text }
         val allNotes = drift + insights
         if (allNotes.isNotEmpty()) {
             item {
@@ -426,10 +444,14 @@ private fun SleepScreen(vm: AppViewModel, selDay: String?, onDay: (String) -> Un
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (series.isEmpty()) { item { EmptyTab(Glyph.Moon, "No nights yet", "Wear the ring to bed. Sleep stages, readiness and calm appear here after your first sync in the morning.") }; return@LazyColumn }
         val dates = series.map { it.date }
-        val day = selDay?.takeIf { it in dates } ?: dates.last()
+        // open on the latest day that has a night: today is empty until you wear the ring to bed
+        val day = selDay?.takeIf { it in dates } ?: dates.lastOrNull { dt -> d.analysis.nights.any { it.date == dt } } ?: dates.last()
         val night = d.analysis.nights.lastOrNull { it.date == day }
         item { DayHeader(dates, day, onDay) }
         item { Box(Modifier.fadeUp(1)) { ScoreCard("Sleep", night?.sleepScore, "No sleep recorded for this day. Wear the ring to bed; it reports the night once you're up.") { night?.let { SleepDetails(it) } } } }
+        night?.sleepDebtH?.let { debt ->
+            item { Box(Modifier.fadeUp(2)) { SleepDebtPanel(debt, d.analysis.profile?.age?.let { com.aashish.myrings.data.Metabolic.sleepNeedHours(it) } ?: com.aashish.myrings.data.Metabolic.sleepNeedHours(null)) } }
+        }
         item { Box(Modifier.fadeUp(2)) { ScoreCard("Readiness", night?.readiness, "Appears after the ring records a night's sleep.") } }
         item { Box(Modifier.fadeUp(3)) { StressCard(d.analysis.stress[day]) } }
     }
@@ -453,14 +475,17 @@ private fun ActivityScreen(vm: AppViewModel, selDay: String?, onDay: (String) ->
         // yesterday's readings moved onto today's clock so the two lines line up by time of day
         fun shifted(l: List<Pair<Long, Double>>?) = l.orEmpty().map { (t, v) -> (t + 86_400L) to v }
         item { DayHeader(dates, day, onDay) }
+        item { Box(Modifier.fadeUp(1)) { ScoreCard("Activity", d.analysis.activity[day], "Appears once the ring has a few hours of data for the day.") } }
         item { Box(Modifier.fadeUp(1)) { ActivityCard(series.first { it.date == day }) } }
+        val dayWorkouts = d.analysis.workouts[day].orEmpty()
+        item { Box(Modifier.fadeUp(2)) { WorkoutsPanel(dayWorkouts) } }
         if (intra != null) {
             item { Box(Modifier.fadeUp(2)) { DayHighlights(intra) } }
             item {
                 Text("Press and drag on any chart: the time cursor moves on all three, so you can see what your heart rate did while you were moving.",
                     fontSize = 12.sp, color = MaterialTheme.aura.ink3, modifier = Modifier.padding(horizontal = 4.dp))
             }
-            item { Box(Modifier.fadeUp(3)) { TimeChart("Heart rate · 5-min median", intra.hr, Palette.Bad, "bpm", caption = "Good-quality beats while worn.", cursor = cursor, onCursor = { cursor = it }, bands = sleepBand, compare = shifted(prev?.hr)) } }
+            item { Box(Modifier.fadeUp(3)) { TimeChart("Heart rate · 5-min median", intra.hr, Palette.Bad, "bpm", caption = "Good-quality beats while worn.", cursor = cursor, onCursor = { cursor = it }, bands = sleepBand, compare = shifted(prev?.hr), highlights = dayWorkouts.map { it.start to it.end }) } }
             item { Box(Modifier.fadeUp(4)) { TimeChart("Activity level · MET per minute", intra.met, Palette.Ember, "MET", 1, bars = true, marks = intra.alerts, caption = "Dashed lines: move reminders from the ring.", cursor = cursor, onCursor = { cursor = it }, describe = { metWord(it) }) } }
             item { Box(Modifier.fadeUp(5)) { TimeChart("Skin temperature", intra.temp, Palette.Warn, "°C", 1, caption = "Only while worn.", cursor = cursor, onCursor = { cursor = it }, bands = sleepBand, compare = shifted(prev?.temp)) } }
         }
@@ -536,6 +561,32 @@ private fun RingTab(vm: AppViewModel, ring: RingUi, onAdd: () -> Unit) {
         item { Box(Modifier.fadeUp(3)) { TimeChart("Battery · last 24 hours", batteryPoints(detail), Palette.Good, "%", caption = "Includes the ring's own records, which arrive with each sync.") } }
 
         item {
+            var showBackup by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().fadeUp(4).pressScale({ showBackup = true }), verticalAlignment = Alignment.CenterVertically) {
+                AuraIcon(Glyph.Check, a.ink2, size = 20.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Back up this ring's key", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Without it, a wiped phone means another factory reset", fontSize = 12.sp, color = a.ink3)
+                }
+                AuraIcon(Glyph.ChevronRight, a.ink3, size = 18.dp)
+            }
+            if (showBackup) KeyBackupDialog(ring, fresh = false, onClose = { showBackup = false }, onMessage = vm::toast)
+        }
+        item {
+            var showExport by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().fadeUp(4).pressScale({ showExport = true }), verticalAlignment = Alignment.CenterVertically) {
+                AuraIcon(Glyph.Plus, a.ink2, size = 20.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Export your data", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Daily summary, sleep nights and workouts as CSV", fontSize = 12.sp, color = a.ink3)
+                }
+                AuraIcon(Glyph.ChevronRight, a.ink3, size = 18.dp)
+            }
+            if (showExport) ExportDialog(detail?.analysis, ring.row.serial, onClose = { showExport = false }, onMessage = vm::toast)
+        }
+        item {
             Row(Modifier.fillMaxWidth().fadeUp(4), verticalAlignment = Alignment.CenterVertically) {
                 AuraIcon(Glyph.Code, a.ink2, size = 20.dp)
                 Spacer(Modifier.width(12.dp))
@@ -544,6 +595,25 @@ private fun RingTab(vm: AppViewModel, ring: RingUi, onAdd: () -> Unit) {
                     Text("Raw events, keys and the activity log", fontSize = 12.sp, color = a.ink3)
                 }
                 Switch(dev, vm::setDev)
+            }
+        }
+        item {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            var headsUp by remember { mutableStateOf(com.aashish.myrings.service.HealthNotifier.enabled(ctx)) }
+            Row(Modifier.fillMaxWidth().fadeUp(4), verticalAlignment = Alignment.CenterVertically) {
+                AuraIcon(Glyph.Alert, a.ink2, size = 20.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Health heads-ups", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("A notification if your heart rate doesn't settle after activity, or last night's heart rate or temperature was off your normal", fontSize = 12.sp, color = a.ink3)
+                }
+                Switch(headsUp, { headsUp = it; com.aashish.myrings.service.HealthNotifier.setEnabled(ctx, it) })
+            }
+            if (dev) {
+                Spacer(Modifier.height(10.dp))
+                AuraButton("Send a test notification", Glyph.Alert, filled = false, modifier = Modifier.fillMaxWidth()) {
+                    if (!com.aashish.myrings.service.HealthNotifier.sendTest(ctx)) vm.toast("Notifications are blocked for My Rings. Allow them in Android settings.")
+                }
             }
         }
         if (dev) item { DevPanel(vm, ring) }

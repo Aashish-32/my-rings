@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  App icon mark, "Dusk ring": an open ring whose gradient runs from moonlight periwinkle (the brand accent) into
+  ember, a ring worn from night into day, with a small moon (the sensor) resting in its opening.
+  Ring: radius 20 around the centre, 7.5 thick, opening centred at 40 degrees above the right horizontal.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path
+        android:pathData="M73.563,49.842 A20,20 0 1,1 61.492,35.456"
+        android:strokeWidth="7.5" android:strokeLineCap="round" android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient android:type="linear" android:startX="36" android:startY="74" android:endX="74" android:endY="34">
+                <item android:offset="0" android:color="#FF6576FF" />
+                <item android:offset="0.42" android:color="#FF9A86FF" />
+                <item android:offset="0.72" android:color="#FFF08C9A" />
+                <item android:offset="1" android:color="#FFFFB25E" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- moon glow -->
+    <path android:pathData="M62.321,41.144a7,7 0 1,0 14,0a7,7 0 1,0 -14,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="69.321" android:centerY="41.144" android:gradientRadius="7">
+                <item android:offset="0" android:color="#8CFFE9D2" />
+                <item android:offset="1" android:color="#00FFE9D2" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- moon -->
+    <path android:fillColor="#FFFFE9D2" android:pathData="M66.521,41.144a2.8,2.8 0 1,0 5.6,0a2.8,2.8 0 1,0 -5.6,0z" />
+</vector>

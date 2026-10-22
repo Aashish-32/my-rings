@@ -21,7 +21,7 @@ data class StoredEvent(val id: Long, val name: String, val tag: Int, val ringTs:
  * Local SQLite store. The events / device / sync_state tables intentionally mirror the PC client's
  * oura.db, so a database from either side can be read by the other.
  */
-class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db", null, 4) {
+class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("create table rings (serial text primary key, name text not null, address text, key_hex text not null, added_unix integer not null)")
@@ -35,7 +35,7 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
         db.execSQL("create index events_name on events (serial, name, ring_timestamp)")
         db.execSQL("create table battery (serial text not null, pct integer not null, ts integer not null)")
         db.execSQL("create index battery_idx on battery (serial, ts)")
-        onUpgrade(db, 1, 4)
+        onUpgrade(db, 1, 5)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
@@ -45,6 +45,7 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
             db.execSQL("create index if not exists events_ts on events (serial, ring_timestamp)")
         }
         // v3: remember what the ring last said about heart-rate / SpO2 tracking, so the UI can show a real status
+        if (o < 5) db.execSQL("create table if not exists meta (key text primary key, value text not null)")
         if (o < 3) db.execSQL("create table if not exists tracking (serial text primary key, hr_mode integer, spo2_mode integer, ts integer not null)")
         // v4: the wearer's body profile, per ring (used for calories, BMR and age-aware sleep scoring)
         if (o < 4) db.execSQL("create table if not exists profile (serial text primary key, weight_kg real, height_cm real, birth_year integer, sex integer)")
@@ -96,6 +97,41 @@ class Store(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "myrings.db
             put("serial", serial); put("weight_kg", p.weightKg); put("height_cm", p.heightCm); put("birth_year", p.birthYear); put("sex", p.sex.code)
         }
         writableDatabase.insertWithOnConflict("profile", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    // ---- small key/value settings kept with the data (decoder version, re-decode progress, ...) ----
+    @Synchronized fun meta(key: String): String? =
+        readableDatabase.rawQuery("select value from meta where key=?", arrayOf(key)).use { if (it.moveToFirst()) it.getString(0) else null }
+
+    @Synchronized fun setMeta(key: String, value: String) {
+        writableDatabase.insertWithOnConflict("meta", null, ContentValues().apply { put("key", key); put("value", value) }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    /**
+     * Re-decodes one batch of stored events (ids above [afterId]) with [decode] and rewrites the stored JSON where it changed.
+     * Returns the last id handled and how many rows changed, or null when there is nothing left.
+     */
+    @Synchronized fun redecodeBatch(afterId: Long, limit: Int, decode: (tag: Int, body: ByteArray) -> String?): Pair<Long, Int>? {
+        val db = writableDatabase
+        val rows = ArrayList<Triple<Long, Int, ByteArray>>()
+        val old = HashMap<Long, String?>()
+        db.rawQuery("select id, tag, body, decoded_json from events where id > ? order by id limit ?", arrayOf(afterId.toString(), limit.toString())).use { c ->
+            while (c.moveToNext()) { rows += Triple(c.getLong(0), c.getInt(1), c.getBlob(2)); old[c.getLong(0)] = c.getString(3) }
+        }
+        if (rows.isEmpty()) return null
+        var changed = 0
+        db.beginTransaction()
+        try {
+            for ((id, tag, body) in rows) {
+                val json = decode(tag, body)
+                if (json != old[id]) {
+                    db.execSQL("update events set decoded_json = ? where id = ?", arrayOf<Any?>(json, id))
+                    changed++
+                }
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        return rows.last().first to changed
     }
 
     // ---- health tracking status ----

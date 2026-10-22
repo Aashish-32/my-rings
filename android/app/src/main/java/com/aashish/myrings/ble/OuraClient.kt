@@ -13,6 +13,9 @@ interface RingTransport {
 
 class AuthException(msg: String) : Exception(msg)
 
+/** One valid beat from the live heart-rate stream. */
+data class LiveBeat(val bpm: Int, val ibiMs: Int)
+
 data class BatchProgress(val nextCursor: Long, val bytesLeft: Long, val eventsSynced: Int)
 
 private const val DEFAULT_QUIET_MS = 1500L
@@ -133,6 +136,85 @@ class OuraClient(private val t: RingTransport, private val quietMs: Long = DEFAU
             ?: throw ProtocolException("no feature-status response")
         val b = p.payload
         return FeatureStatus(u8(b, 1), u8(b, 2), u8(b, 3), u8(b, 4), u8(b, 5))
+    }
+
+    // ---- live heart rate ----
+    /**
+     * Streams live heart rate for up to [durationMs]: puts daytime-HR in CONNECTED_LIVE mode, reports each valid beat, and always
+     * restores AUTOMATIC afterwards. The ring must be worn. Mirrors open_oura `live_heart_rate`.
+     */
+    suspend fun liveHeartRate(durationMs: Long, onBeat: (LiveBeat) -> Unit, onFrame: (ByteArray) -> Unit = {}, onMotion: (Int, Int, Int) -> Unit = { _, _, _ -> }) {
+        while (t.incoming.tryReceive().isSuccess) { /* drop backlog */ }
+        // The official app switches daytime HR to live and then *subscribes* to it; without the subscription the ring accepts the
+        // mode change but never pushes the beats (seen on a Ring 4: the ack arrives, then silence).
+        t.write(Req.setFeatureMode(Feature.DAYTIME_HR, FeatureMode.CONNECTED_LIVE))
+        t.write(Req.setFeatureSubscription(Feature.DAYTIME_HR, 2))
+        try {
+            val start = System.currentTimeMillis()
+            val end = start + durationMs
+            var beats = 0
+            var nudged = false
+            var acmOn = false
+            var lastBeatAt = 0L
+            while (true) {
+                val now = System.currentTimeMillis()
+                if (now >= end) break
+                // no beat yet after 12 s: also enable the async-notification flags the app sets at connect, then subscribe again
+                if (!nudged && beats == 0 && now - start > 12_000) {
+                    nudged = true
+                    runCatching { t.write(Req.setNotification(0xbf)); t.write(Req.setFeatureSubscription(Feature.DAYTIME_HR, 2)) }
+                }
+                // the motion stream starts only once a pulse is locked, so it can't disturb the lock; if the beats stop after it starts, it is switched off
+                if (!acmOn && beats > 0 && lastBeatAt != 0L && now - start < durationMs - 4_000) {
+                    acmOn = true
+                    runCatching { t.write(Req.setRealtime(ACM_MASK, 1, 0)) }
+                } else if (acmOn && lastBeatAt != 0L && now - lastBeatAt > 10_000) {
+                    acmOn = false
+                    lastBeatAt = Long.MAX_VALUE // never try again this measurement
+                    runCatching { t.write(Req.realtimeOff()) }
+                }
+                val r = withTimeoutOrNull(minOf(end - now, 1000L)) { t.incoming.receiveCatching() } ?: continue
+                val frame = r.getOrNull() ?: break
+                onFrame(frame)
+                parseLiveHrFrame(frame)?.let { beats++; lastBeatAt = System.currentTimeMillis(); onBeat(it) }
+                for ((x, y, z) in parseAcmFrame(frame)) onMotion(x, y, z)
+            }
+        } finally {
+            // best effort, even if the caller was cancelled: stop the live stream and leave the ring measuring on its own schedule
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { t.write(Req.realtimeOff()) }
+                runCatching { t.write(Req.setFeatureSubscription(Feature.DAYTIME_HR, 0)) }
+                runCatching { t.write(Req.setFeatureMode(Feature.DAYTIME_HR, FeatureMode.AUTOMATIC)) }
+            }
+        }
+    }
+
+    companion object {
+        const val ACM_MASK = 0x20L
+
+        /** An accelerometer indication: `33 len rate seq` then one or two x,y,z readings (i16 little-endian each). */
+        fun parseAcmFrame(f: ByteArray): List<Triple<Int, Int, Int>> {
+            if (f.size < 10 || (f[0].toInt() and 0xff) != 0x33) return emptyList()
+            fun s16(o: Int) = ((f[o + 1].toInt() shl 8) or (f[o].toInt() and 0xff)).toShort().toInt()
+            val out = ArrayList<Triple<Int, Int, Int>>()
+            out.add(Triple(s16(4), s16(6), s16(8)))
+            if (f.size >= 16) out.add(Triple(s16(10), s16(12), s16(14)))
+            return out
+        }
+
+        /**
+         * A live HR notification: `2f len 28 <cap> <status> <state> <timeSince:2> <ibi:2>`. The IBI word is a 12-bit interval in ms
+         * plus a 4-bit validity nibble (1 = valid). Anything else, or an implausible interval, is ignored.
+         */
+        fun parseLiveHrFrame(f: ByteArray): LiveBeat? {
+            if (f.size < 10 || (f[0].toInt() and 0xff) != 0x2f || (f[2].toInt() and 0xff) != 0x28) return null
+            if ((f[3].toInt() and 0xff) != Feature.DAYTIME_HR) return null
+            val lo = f[8].toInt() and 0xff; val hi = f[9].toInt() and 0xff
+            val ibi = ((hi and 0x0f) shl 8) or lo
+            if (((hi shr 4) and 0x0f) != 1) return null
+            if (ibi !in 300..2000) return null
+            return LiveBeat(60_000 / ibi, ibi)
+        }
     }
 
     // ---- history ----
